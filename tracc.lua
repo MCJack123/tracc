@@ -1,6 +1,7 @@
 local globalParams = {
     realTime = true,
-    notesPerTick = 8
+    notesPerTick = 8,
+    loop = true
 }
 
 local mutedChannels = {}
@@ -781,6 +782,7 @@ while state.order <= #order do
     if state.order == state.currentOrder then
         state.row = 1
         state.order = state.order + 1
+        if globalParams.loop and state.order > #order then state.order = restartPosition + 1 end
     end
 end
 
