@@ -1,5 +1,3 @@
--- note: ping @kaisomir#1357
-
 local globalParams = {
     realTime = true,
     notesPerTick = 8
