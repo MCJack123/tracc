@@ -1,6 +1,8 @@
 # tracc
 An XM module tracker for ComputerCraft/CraftOS-PC. Sort of buggy, but it works.
 
+![Screenshot](2021-03-28_22.50.15.png)
+
 ## Usage
 To play a module, just run tracc with the path to the XM file. Press Q to close the tracker while playing.
 
