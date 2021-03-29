@@ -1,7 +1,14 @@
 local globalParams = {
     realTime = true,
     notesPerTick = 8,
-    loop = true
+    loop = true,
+    shownColumns = {
+        note = true,
+        instrument = true,
+        volume = true,
+        effect = true
+    },
+    autoSize = true
 }
 
 local mutedChannels = {}
@@ -25,9 +32,12 @@ local noteRange = {
     xylophone = 5
 }
 
+local lastTick = os.epoch "utc"
 local function waitForNextTick(state)
-    if globalParams.realTime then sleep(2.5 / state.bpm)
+    if lastTick < os.epoch "utc" then lastTick = os.epoch "utc" end
+    if globalParams.realTime then sleep(((lastTick + (2500 / state.bpm)) - os.epoch "utc") / 1000)
     else sleep(0.05) end
+    lastTick = lastTick + (2500 / state.bpm)
 end
 
 local function toFreq(note) return 27.5 * 2^((note + 2)/12-2) end
@@ -101,6 +111,7 @@ local function setNote(state, channel, note)
             if not mutedChannels[channel.num] then spk.playSound(sample.name, channel.volume / 64 * (state.globalVolume / 64), toSpeed(note)) end
         end
         channel.note = note
+        channel.didSetInstrument = true
     end
 end
 
@@ -325,6 +336,11 @@ effects = {
             if param == 0 then state.tempo = 65535
             else state.tempo = param end
         else state.bpm = param end
+        term.setCursorPos(1, 1)
+        term.clearLine()
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(colors.white)
+        print("Name:", state.name, "Tempo:", state.tempo, "BPM:", state.bpm)
     end,
     function(state, channel, param) -- G
         state.globalVolume = param
@@ -459,7 +475,7 @@ do
     end
 
     local path = ...
-    if path == nil then error("Usage: xmplay <file>") end
+    if path == nil then error("Usage: tracc <file>") end
     local file = fs.open(path, "rb")
 
     if file.read(17) ~= "Extended Module: " then
@@ -625,27 +641,52 @@ local function redrawScreen(pat, ord, start)
     local s = tostring(pat - 1)
     term.blit(s, ("f"):rep(#s), ("0"):rep(#s))
     trackerwin.clear()
-    for yy = 1, h do
-        if patterns[pat][trackerpos-math.floor(h / 2)+1] then
+    for yy = 0, h do
+        if patterns[pat][trackerpos-math.ceil(h / 2)+1] then
             trackerwin.setCursorPos(1, yy)
-            trackerwin.blit(strings.ensure_width(tostring(trackerpos-math.floor(h / 2)), 4), "8888", "ffff")
+            trackerwin.blit(strings.ensure_width(tostring(trackerpos-math.ceil(h / 2)), 4), "8888", "ffff")
             for j = 1, channelCount do
-                if patterns[pat][trackerpos-math.floor(h / 2)+1][j] ~= nil then
-                    local note = patterns[pat][trackerpos-math.floor(h / 2)+1][j]
-                    if note.note then trackerwin.blit(formatNote(note.note) .. " ", "bbbb", "ffff")
-                    else trackerwin.blit("--- ", "0000", "ffff") end
-                    if note.instrument then trackerwin.blit(("%02d"):format(note.instrument), "99", "ff")
-                    else trackerwin.blit("--", "00", "ff") end
-                    if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                    elseif note.note and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
-                    else trackerwin.blit(" -- ", "0000", "ffff") end
-                    if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param, 4)] or effectColor[note.effect])):rep(4), "ffff")
-                    else trackerwin.blit("--- ", "0000", "ffff") end
-                else trackerwin.blit("--- -- -- --- ", "00000000000000", "ffffffffffffff") end
+                if patterns[pat][trackerpos-math.ceil(h / 2)+1][j] ~= nil then
+                    local note = patterns[pat][trackerpos-math.ceil(h / 2)+1][j]
+                    if globalParams.shownColumns.note then
+                        if note.note then trackerwin.blit(formatNote(note.note), "bbb", "fff")
+                        else trackerwin.blit("---", "000", "fff") end
+                        if globalParams.shownColumns.instrument or not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.instrument then
+                        if note.instrument then trackerwin.blit(("%02d"):format(note.instrument), "99", "ff")
+                        else trackerwin.blit("--", "00", "ff") end
+                        if not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.volume then
+                        if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
+                        elseif note.note and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        else trackerwin.blit(" -- ", "0000", "ffff") end
+                    end
+                    if globalParams.shownColumns.effect then
+                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param, 4)] or effectColor[note.effect])):rep(4), "ffff")
+                        else trackerwin.blit("--- ", "0000", "ffff") end
+                    end
+                else
+                    if globalParams.shownColumns.note then
+                        trackerwin.blit("---", "000", "fff")
+                        if globalParams.shownColumns.instrument or not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.instrument then
+                        trackerwin.blit("--", "00", "ff")
+                        if not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.volume then trackerwin.blit(" -- ", "0000", "ffff") end
+                    if globalParams.shownColumns.effect then trackerwin.blit("--- ", "0000", "ffff") end
+                end
             end
         end
         trackerpos = trackerpos + 1
     end
+    trackerwin.setCursorPos(1, math.ceil(h / 2))
+    local line1, line2, line3 = trackerwin.getLine(math.ceil(h / 2))
+    trackerwin.blit("0   ", "0000", "7777")
+    trackerwin.blit(line1:sub(5), line2:sub(5), ("7"):rep(#line3 - 4))
 end
 
 local function scrollScreen(pat)
@@ -654,35 +695,56 @@ local function scrollScreen(pat)
     term.setTextColor(colors.white)
     term.write(("[%02d:%02d]"):format(math.floor((os.epoch "utc" - startTime) / 60000), math.floor((os.epoch "utc" - startTime) / 1000) % 60))
     trackerwin.scroll(1)
-    if y > 1 then
+    if y > 0 then
         trackerwin.setCursorPos(1, math.ceil(h / 2) - 1)
         local line1, line2, line3 = trackerwin.getLine(math.ceil(h / 2) - 1)
-        trackerwin.blit(strings.ensure_width(tostring(y-2), 4), "8888", "ffff")
+        trackerwin.blit(strings.ensure_width(tostring(y-1), 4), "8888", "ffff")
         trackerwin.blit(line1:sub(5), line2:sub(5), ("f"):rep(#line3 - 4))
     end
     if y <= #patterns[pat] then
         trackerwin.setCursorPos(1, math.ceil(h / 2))
         local line1, line2, line3 = trackerwin.getLine(math.ceil(h / 2))
-        trackerwin.blit(strings.ensure_width(tostring(y-1), 4), "0000", "7777")
+        trackerwin.blit(strings.ensure_width(tostring(y), 4), "0000", "7777")
         trackerwin.blit(line1:sub(5), line2:sub(5), ("7"):rep(#line3 - 4))
     end
     trackerwin.setCursorPos(1, h)
-    if patterns[pat][trackerpos-math.floor(h / 2)+1] then
-        trackerwin.blit(strings.ensure_width(tostring(trackerpos-math.floor(h / 2)), 4), "8888", "ffff")
+    if patterns[pat][trackerpos-math.ceil(h / 2)+1] then
+        trackerwin.blit(strings.ensure_width(tostring(trackerpos-math.ceil(h / 2)), 4), "8888", "ffff")
         for x = 1, channelCount do
-            if patterns[pat][trackerpos-math.floor(h / 2)+1] then
-                if patterns[pat][trackerpos-math.floor(h / 2)+1][x] ~= nil then
-                    local note = patterns[pat][trackerpos-math.floor(h / 2)+1][x]
-                    if note.note then trackerwin.blit(formatNote(note.note) .. " ", "bbbb", "ffff")
-                    else trackerwin.blit("--- ", "0000", "ffff") end
-                    if note.instrument then trackerwin.blit(("%02d"):format(note.instrument), "99", "ff")
-                    else trackerwin.blit("--", "00", "ff") end
-                    if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                    elseif note.note and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
-                    else trackerwin.blit(" -- ", "0000", "ffff") end
-                    if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param, 4)] or effectColor[note.effect])):rep(4), "ffff")
-                    else trackerwin.blit("--- ", "0000", "ffff") end
-                else trackerwin.blit("--- -- -- --- ", "00000000000000", "ffffffffffffff") end
+            if patterns[pat][trackerpos-math.ceil(h / 2)+1] then
+                if patterns[pat][trackerpos-math.ceil(h / 2)+1][x] ~= nil then
+                    local note = patterns[pat][trackerpos-math.ceil(h / 2)+1][x]
+                    if globalParams.shownColumns.note then
+                        if note.note then trackerwin.blit(formatNote(note.note), "bbb", "fff")
+                        else trackerwin.blit("---", "000", "fff") end
+                        if globalParams.shownColumns.instrument or not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.instrument then
+                        if note.instrument then trackerwin.blit(("%02d"):format(note.instrument), "99", "ff")
+                        else trackerwin.blit("--", "00", "ff") end
+                        if not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.volume then
+                        if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
+                        elseif note.note and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        else trackerwin.blit(" -- ", "0000", "ffff") end
+                    end
+                    if globalParams.shownColumns.effect then
+                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param, 4)] or effectColor[note.effect])):rep(4), "ffff")
+                        else trackerwin.blit("--- ", "0000", "ffff") end
+                    end
+                else
+                    if globalParams.shownColumns.note then
+                        trackerwin.blit("---", "000", "fff")
+                        if globalParams.shownColumns.instrument or not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.instrument then
+                        trackerwin.blit("--", "00", "ff")
+                        if not globalParams.shownColumns.volume then trackerwin.write(" ") end
+                    end
+                    if globalParams.shownColumns.volume then trackerwin.blit(" -- ", "0000", "ffff") end
+                    if globalParams.shownColumns.effect then trackerwin.blit("--- ", "0000", "ffff") end
+                end
             end
         end
     end
@@ -690,7 +752,7 @@ local function scrollScreen(pat)
     y = y + 1
 end
 
-local state = {tempo = tempo, bpm = bpm, channels = {}, module = {instruments = instruments, order = order}, speakers = {}, order = 1, row = 1, globalVolume = 64}
+local state = {tempo = tempo, bpm = bpm, channels = {}, module = {instruments = instruments, order = order}, speakers = {}, order = 1, row = 1, globalVolume = 64, name = name}
 for i = 1, channelCount do state.channels[i] = {num = i, effectMemory = {}, playing = {note = 0, instrument = 0, volume = 0, effect = 0, effect_param = 0}, volume = 64, volumeEnvelope = {volume = 64, pos = 0, x = 0}} end
 for i,v in ipairs{peripheral.find("speaker")} do state.speakers[i] = {usage = 0, speaker = v} end
 
@@ -704,7 +766,7 @@ end end
 local function processTick(e)
     for _,c in ipairs(state.channels) do
         if e and c.playing and c.playing.effect then effects[c.playing.effect](state, c, c.playing.effect_param or 0) end
-        if c.instrument and c.volumeEnvelope.pos > 0 and not c.volumeEnvelope.sustain then
+        if c.instrument and c.volumeEnvelope.pos > 0 and not c.volumeEnvelope.sustain and not c.didSetInstrument and c.note then
             c.volumeEnvelope.x = c.volumeEnvelope.x + 1
             c.volumeEnvelope.volume = c.volumeEnvelope.volume + c.volumeEnvelope.rate
             if c.volumeEnvelope.x == c.instrument.volumeEnvelope.points[c.volumeEnvelope.pos+1].x then
@@ -715,7 +777,7 @@ local function processTick(e)
             end
             setVolume(state, c, c.volume)
         end
-        if c.instrument and c.instrument.panningEnvelope.loopType % 2 == 1 and not c.panningEnvelope.sustain then
+        if c.instrument and c.instrument.panningEnvelope.loopType % 2 == 1 and not c.panningEnvelope.sustain and not c.didSetInstrument and c.note then
             c.panningEnvelope.x = c.panningEnvelope.x + 1
             c.panningEnvelope.panning = c.panningEnvelope.panning + c.panningEnvelope.rate
             if c.panningEnvelope.x == c.instrument.panningEnvelope.points[c.panningEnvelope.pos+1].x then
@@ -726,7 +788,15 @@ local function processTick(e)
             end
             setPan(state, c, c.panningEnvelope.panning * 2)
         end
+        c.didSetInstrument = false
     end
+end
+
+if globalParams.autoSize then
+    if channelCount * 14 + 4 > w then globalParams.shownColumns.instrument = false end
+    if channelCount * 11 + 4 > w then globalParams.shownColumns.effect = false end
+    if channelCount * 7 + 4 > w then globalParams.shownColumns.volume = false end
+    -- if it's still too small: oh well
 end
 
 local ok, err = pcall(parallel.waitForAny, function()
@@ -737,7 +807,7 @@ while state.order <= #order do
     trackerpos = state.row - 1
     y = state.row
     redrawScreen(v+1, state.order)
-    scrollScreen(v+1)
+    --scrollScreen(v+1)
     while state.row <= #patterns[v+1] do
         state.tick = 1
         state.currentRow = state.row
@@ -764,7 +834,7 @@ while state.order <= #order do
         end
         processTick(false)
         waitForNextTick(state)
-        for k = 2, tempo do
+        for k = 2, state.tempo do
             state.tick = k
             processTick(true)
             waitForNextTick(state)
