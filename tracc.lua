@@ -8,7 +8,7 @@ local globalParams = {
         volume = true,
         effect = true
     },
-    autoSize = false
+    autoSize = true
 }
 
 local mutedChannels = {}
