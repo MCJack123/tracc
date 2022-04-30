@@ -4,12 +4,12 @@ local globalParams = {
     loop = true,
     shownColumns = {
         note = true,
-        instrument = true,
+        instrument = false,
         volume = true,
         effect = true
     },
-    autoSize = true,
-    interpolation = "linear"
+    autoSize = false,
+    interpolation = select(2, ...) or "none"
 }
 
 local mutedChannels = {}
@@ -67,20 +67,30 @@ function sound.fadeOut(c, time)
     end
 end
 function sound.setPosition(c, p) sound.channels[c].pos = p / #sound.channels[c].wavetable end
+function sound.setInterpolation(c, i) sound.channels[c].interpolation = i end
+local function tovu(n) return math.log(1+9*math.abs(n), 10) end
 function sound.generate(length, cc, stereo)
-    local retval, right = {}, {}
+    local retval, right, vu = {}, {}, {}
     for i = 1, length do
         local sample, rs = 0, 0
         local num = 0
         for i = 1, (cc or 32) do
-            c = sound.channels[i]
+            local c = sound.channels[i]
+            local interp = c.interpolation or sound.interpolation
             if c.wavetable and c.volume > 0 and c.frequency > 0 then
                 local p = c.pos * #c.wavetable;
                 local s
-                if sound.interpolation == "none" then s = c.wavetable[math.floor(p)+1] * c.volume
-                elseif sound.interpolation == "linear" then s = (c.wavetable[math.floor(p)+1] + (c.wavetable[math.floor(p+1) % #c.wavetable+1] - c.wavetable[math.floor(p)+1]) * (p - math.floor(p))) * c.volume end
-                if stereo then sample, rs = sample + s * math.max(c.pan+1, 1), rs + s * math.max(2-c.pan-1, 1)
-                else sample = sample + s end
+                if interp == "none" then s = c.wavetable[math.floor(p)+1] * c.volume
+                elseif interp == "linear" then s = (c.wavetable[math.floor(p)+1] + (c.wavetable[math.floor(p+1) % #c.wavetable+1] - c.wavetable[math.floor(p)+1]) * (p - math.floor(p))) * c.volume end
+                if stereo then
+                    sample, rs = sample + s * math.min(c.pan+1, 1), rs + s * math.min(1-c.pan, 1)
+                    if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu(s * math.min(c.pan+1, 1)), vu[i][2] + tovu(s * math.min(1-c.pan, 1))
+                    else vu[i] = {tovu(s * math.min(c.pan+1, 1)), tovu(s * math.min(1-c.pan, 1))} end
+                else
+                    sample = sample + s
+                    if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu(s), vu[i][2] + tovu(s)
+                    else vu[i] = {tovu(s), tovu(s)} end
+                end
                 c.pos = c.pos + c.frequency / 48000 * c.dir
                 if c.pos < 0 then c.pos, c.dir = 0, 1 end
                 while c.pos >= 1 do
@@ -104,7 +114,8 @@ function sound.generate(length, cc, stereo)
         retval[i] = math.max(math.min(sample / 4, 1), -1) * 127
         right[i] = math.max(math.min(rs / 4, 1), -1) * 127
     end
-    return retval, right
+    for i = 1, (cc or 32) do vu[i] = vu[i] and {vu[i][1] / length, vu[i][2] / length} or {0, 0} end
+    return retval, right, vu
 end
 
 local lastTick = os.epoch "utc"
@@ -114,12 +125,12 @@ local function waitForNextTick(state)
     else sleep(0.05) end
     lastTick = lastTick + (2500 / state.bpm)
 end
-local function waitForNextRow(state)
+local function waitForNextRow(state, stereo)
     if lastTick < os.epoch "utc" then lastTick = os.epoch "utc" end
     --[[if globalParams.realTime then sleep(((lastTick + (2500 / state.bpm)) - os.epoch "utc" - 3) / 1000)
     else sleep(0.05) end]]
     os.pullEvent("speaker_audio_empty")
-    os.pullEvent("speaker_audio_empty")
+    if stereo then os.pullEvent("speaker_audio_empty") end
     lastTick = lastTick + (2500 / state.bpm)
 end
 
@@ -162,6 +173,8 @@ local function setInstrument(state, channel, inst)
     else
         channel.panningEnvelope = {panning = 32, pos = 0, x = 0}
     end
+    if channel.instrument.vibrato.sweep > 0 then channel.instrument.vibrato.sweep_mult = 0
+    else channel.instrument.vibrato.sweep_mult = 1 end
 end
 
 local function setNote(state, channel, note)
@@ -172,7 +185,7 @@ local function setNote(state, channel, note)
                 sound.fadeOut(channel.num, (32768 / channel.instrument.fadeOut) * (2.5 / state.bpm))
             elseif channel.instrument and #channel.instrument.volumeEnvelope.points - 1 == channel.instrument.volumeEnvelope.sustain then
                 sound.fadeOut(channel.num, (channel.instrument.volumeEnvelope.points[#channel.instrument.volumeEnvelope.points].x - channel.instrument.volumeEnvelope.points[#channel.instrument.volumeEnvelope.points-1].x) * (2.5 / state.bpm))
-            else sound.setVolume(channel.num, 0) sound.setFrequency(channel.num, 0) end
+            else sound.setVolume(channel.num, 0) sound.setFrequency(channel.num, 0) channel.frequency = 0 end
         end
         channel.note = nil
     elseif note ~= 0 then
@@ -181,8 +194,11 @@ local function setNote(state, channel, note)
             if not channel.speaker then sound.setVolume(channel.num, 0) end
         elseif not channel.speaker and sound.version then
             channel.finetune = sample.finetune
+            channel.frequency = toFreq(note+sample.note, channel.finetune, sample)
             sound.setWaveType(channel.num, "custom", sample.wavetable, sample.loopStart, bit32.band(sample.type, 3))
-            setFrequency(channel.num, toFreq(note+sample.note, channel.finetune, sample), sample)
+            if sample.name:byte(1) == 33 then sound.setInterpolation(channel.num, "linear")
+            else sound.setInterpolation(channel.num, nil) end
+            setFrequency(channel.num, channel.frequency, sample)
         elseif noteRange[sample.name] then
             local spk
             for _,v in ipairs(state.speakers) do
@@ -239,6 +255,7 @@ local e_effects = {
         if param == 0 then param = channel.effectMemory[0xE1] or 0
         else channel.effectMemory[0xE1] = param end
         if not channel.speaker and state.tick == 1 and channel.note then
+            channel.frequency = channel.frequency * (2^(param / portaDrift))
             setFrequency(channel.num, getFrequency(channel.num, channel.instrument.samples[channel.note]) * (2^(param / portaDrift)), channel.instrument.samples[channel.note])
         end
     end,
@@ -246,6 +263,7 @@ local e_effects = {
         if param == 0 then param = channel.effectMemory[0xE2] or 0
         else channel.effectMemory[0xE2] = param end
         if not channel.speaker and state.tick == 1 and channel.note then
+            channel.frequency = channel.frequency / (2^(param / portaDrift))
             setFrequency(channel.num, getFrequency(channel.num, channel.instrument.samples[channel.note]) / (2^(param / portaDrift)), channel.instrument.samples[channel.note])
         end
     end,
@@ -258,7 +276,10 @@ local e_effects = {
     function(state, channel, param) -- 5
         if not channel.speaker then
             channel.finetune = param
-            if channel.playing then setFrequency(channel.num, toFreq(channel.playing.note+channel.instrument.samples[channel.playing.note].note, channel.finetune, channel.instrument.samples[channel.playing.note]), channel.instrument.samples[channel.playing.note]) end
+            if channel.playing then
+                channel.frequency = toFreq(channel.playing.note+channel.instrument.samples[channel.playing.note].note, channel.finetune, channel.instrument.samples[channel.playing.note])
+                setFrequency(channel.num, channel.frequency, channel.instrument.samples[channel.playing.note])
+            end
         end
     end,
     function(state, channel, param) -- 6
@@ -322,6 +343,7 @@ local x_effects = {
         if param == 0 then param = channel.effectMemory[0x211] or 0
         else channel.effectMemory[0x211] = param end
         if not channel.speaker and state.tick == 1 and channel.note then
+            channel.frequency = channel.frequency * (2^(param / (portaDrift*16)))
             setFrequency(channel.num, getFrequency(channel.num, channel.instrument.samples[channel.note]) * (2^(param / (portaDrift*16))), channel.instrument.samples[channel.note])
         end
     end,
@@ -329,6 +351,7 @@ local x_effects = {
         if param == 0 then param = channel.effectMemory[0x212] or 0
         else channel.effectMemory[0x212] = param end
         if not channel.speaker and state.tick == 1 and channel.note then
+            channel.frequency = channel.frequency / (2^(param / (portaDrift*16)))
             setFrequency(channel.num, getFrequency(channel.num, channel.instrument.samples[channel.note]) / (2^(param / (portaDrift*16))), channel.instrument.samples[channel.note])
         end
     end,
@@ -347,6 +370,20 @@ local x_effects = {
     function(state, channel, param) end -- F (does not exist)
 }
 
+local function doVibrato(state, channel, t, speed, depth)
+    local amplitude
+    if t == 0 then amplitude = math.sin(channel.vibrato.pos * math.pi)
+    elseif t == 1 then amplitude = channel.vibrato.pos * 2 - 1
+    elseif t == 2 then amplitude = channel.vibrato.pos >= 0.5 and -1 or 1
+    elseif t == 8 then amplitude = (1 - channel.vibrato.pos) * 2 - 1 -- ramp down (special)
+    else amplitude = math.random() * 2 - 1 end
+    if channel.instrument and channel.note then
+        local sample = channel.instrument.samples[channel.note]
+        setFrequency(channel.num, channel.frequency * 2^(amplitude * depth / (12*8)), sample)
+    end
+    channel.vibrato.pos = (channel.vibrato.pos + (speed / 64)) % 1
+end
+
 local effects
 effects = {
     [0] = function(state, channel, param) -- 0
@@ -358,13 +395,15 @@ effects = {
         if param == 0 then param = channel.effectMemory[1] or 0
         else channel.effectMemory[1] = param end
         if not channel.speaker and state.tick > 1 and channel.note then
-            setFrequency(channel.num, math.min(getFrequency(channel.num, channel.instrument.samples[channel.note]) * (2^(param / portaDrift)), 8363), channel.instrument.samples[channel.note])
+            channel.frequency = channel.frequency * (2^(param / portaDrift))
+            setFrequency(channel.num, getFrequency(channel.num, channel.instrument.samples[channel.note]) * (2^(param / portaDrift)), channel.instrument.samples[channel.note])
         end
     end,
     function(state, channel, param) -- 2
         if param == 0 then param = channel.effectMemory[2] or 0
         else channel.effectMemory[2] = param end
         if not channel.speaker and state.tick > 1 and channel.note then
+            channel.frequency = channel.frequency / (2^(param / portaDrift))
             setFrequency(channel.num, math.max(getFrequency(channel.num, channel.instrument.samples[channel.note]) / (2^(param / portaDrift)), 0), channel.instrument.samples[channel.note])
         end
     end,
@@ -376,15 +415,22 @@ effects = {
             local sample = channel.instrument.samples[note]
             --print(sample.name, channel.playing.note, channel.lastNote, sample.note, getFrequency(channel.num, sample), toFreq(note+sample.note, sample.finetune, sample))
             if state.tick == 1 then
-                setNote(state, channel, channel.lastNote)
+                note = channel.lastNote
+                local sample = channel.instrument.samples[note]
+                channel.finetune = sample.finetune
+                channel.frequency = toFreq(note+sample.note, channel.finetune, sample)
+                setFrequency(channel.num, channel.frequency, sample)
                 if channel.playing and channel.playing.note then channel.lastNote = channel.playing.note end
                 return 0
-            elseif getFrequency(channel.num, sample) < toFreq(note+sample.note, sample.finetune, sample) / 2^(param / portaDrift) then
+            elseif channel.frequency < toFreq(note+sample.note, sample.finetune, sample) / 2^(param / portaDrift) then
+                channel.frequency = channel.frequency * (2^(param / portaDrift))
                 setFrequency(channel.num, getFrequency(channel.num, sample) * 2^(param / portaDrift), sample)
-            elseif getFrequency(channel.num, sample) > toFreq(note+sample.note, sample.finetune, sample) * 2^(param / portaDrift) then
+            elseif channel.frequency > toFreq(note+sample.note, sample.finetune, sample) * 2^(param / portaDrift) then
+                channel.frequency = channel.frequency / (2^(param / portaDrift))
                 setFrequency(channel.num, getFrequency(channel.num, sample) / 2^(param / portaDrift), sample)
-            else--if getFrequency(channel.num, sample) < toFreq(channel.lastNote or channel.playing.note) then
-                setFrequency(channel.num, toFreq(note+sample.note, sample.finetune, sample), sample)
+            elseif channel.frequency ~= toFreq(note+sample.note, sample.finetune, sample) then
+                channel.frequency = toFreq(note+sample.note, sample.finetune, sample)
+                setFrequency(channel.num, channel.frequency, sample)
             end
         end
     end,
@@ -392,16 +438,7 @@ effects = {
         if param == 0 then param = channel.effectMemory[4] or 0
         else channel.effectMemory[4] = param end
         if state.tick == 1 and channel.playing and channel.playing.note and bit32.btest(channel.vibrato.type, 4) then channel.vibrato.pos = 0 end
-        local t, speed, depth, amplitude = bit32.band(channel.vibrato.type, 3), bit32.rshift(param, 4), bit32.band(param, 0x0f)
-        if t == 0 then amplitude = math.sin(channel.vibrato.pos * math.pi)
-        elseif t == 1 then amplitude = channel.vibrato.pos * 2 - 1
-        elseif t == 2 then amplitude = channel.vibrato.pos >= 0.5 and -1 or 1
-        else amplitude = math.random() * 2 - 1 end
-        if channel.instrument and channel.note then
-            local sample = channel.instrument.samples[channel.note]
-            setFrequency(channel.num, toFreq(channel.note+sample.note, sample.finetune, sample) * 2^(amplitude * depth / (12*8)), sample)
-        end
-        channel.vibrato.pos = (channel.vibrato.pos + (speed / 64)) % 1
+        doVibrato(state, channel, bit32.band(channel.vibrato.type, 3), bit32.rshift(param, 4), bit32.band(param, 0x0f))
     end,
     function(state, channel, param) -- 5
         effects[0x3](state, channel, 0)
@@ -418,7 +455,7 @@ effects = {
         setPan(state, channel, param)
     end,
     function(state, channel, param) -- 9
-        if state.tick == 1 then sound.setPosition(channel.num, param * 256) end
+        if state.tick == 1 and not mutedChannels[channel.num] then sound.setPosition(channel.num, param * 256) end
     end,
     function(state, channel, param) -- A
         if param == 0 then param = channel.effectMemory[0xA] or 0
@@ -595,7 +632,7 @@ do
         return n
     end
 
-    local path = ...
+    local path = shell.resolve(...)
     if path == nil then error("Usage: tracc <file>") end
     local file = fs.open(path, "rb")
 
@@ -667,14 +704,14 @@ do
     end
 
     for i = 1, instrumentCount do
-        print(i, ("%X"):format(file.seek()))
+        --print(i, ("%X"):format(file.seek()))
         local inst = {}
         instruments[i] = inst
         local instsize = fromLE(file.read(4))
         inst.name = file.read(22):gsub("[ %z]+$", "")
         file.read()
         local sampleCount = fromLE(file.read(2))
-        print(sampleCount)
+        --print(sampleCount)
         if sampleCount > 0 then
             inst.samples = {}
             inst.samplesByNumber = {}
@@ -697,16 +734,20 @@ do
             inst.volumeEnvelope.loopType = file.read()
             inst.panningEnvelope.loopType = file.read()
             inst.vibrato.type = file.read()
+            if inst.vibrato.type == 1 then inst.vibrato.type = 2
+            elseif inst.vibrato.type == 2 then inst.vibrato.type = 1
+            elseif inst.vibrato.type == 3 then inst.vibrato.type = 8 end
             inst.vibrato.sweep = file.read()
             inst.vibrato.depth = file.read()
             inst.vibrato.rate = file.read()
+            inst.vibrato.sweep_mult = 0
             inst.fadeOut = fromLE(file.read(2))
             file.seek("cur", instsize - 241)
 
             for j = 1, sampleCount do
                 local sample = inst.samplesByNumber[j]
                 sample.size = fromLE(file.read(4))
-                print(j, ("%X"):format(file.seek()), size)
+                --print(j, ("%X"):format(file.seek()), size)
                 sample.loopStart = fromLE(file.read(4)) -- loop start
                 sample.loopLength = fromLE(file.read(4)) -- loop length
                 sample.volume = file.read()
@@ -755,6 +796,8 @@ end
 local notemap = {[0] = "B-", "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#"}
 local function formatNote(note) if note == 97 then return "== " else return notemap[note % 12] .. tostring(math.floor(note / 12)+1) end end
 
+term.setBackgroundColor(colors.black)
+term.setTextColor(colors.white)
 term.clear()
 term.setCursorPos(1, 1)
 print("Name:", name, "Tempo:", tempo, "BPM:", bpm)
@@ -766,10 +809,12 @@ term.setCursorPos(1, 3)
 term.blit("0", "f", "0")
 local w, h = term.getSize()
 local y = 1
-h = h - 4
+h = h - 5
 local trackerpos = 0
-local trackerwin = window.create(term.current(), 1, 5, w, h)
+local scrollPos = 1
+local trackerwin = window.create(term.current(), 1, 6, w, h)
 local startTime = os.epoch "utc"
+local cwidth = (globalParams.shownColumns.note and 3 or 0) + (globalParams.shownColumns.volume and 3 or 0) + (globalParams.shownColumns.instrument and 3 or 0) + (globalParams.shownColumns.effect and 4 or 0) + 1
 
 local effectString = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\\"
 local effectColor = {[0] = "4", "4", "4", "4", "4", "8", "8", "5", "3", "8", "5", "e", "5", "e", "7", "e", "e", "e", "0", "0", "8", "5", "0", "0", "0", "3", "0", "8", "0", "5", "0", "0", "0", "7", "3", "8", "8"}
@@ -792,20 +837,21 @@ local function redrawScreen(pat, ord, start)
     term.setCursorPos(1, 4)
     term.setBackgroundColor(colors.gray)
     term.clearLine()
-    local cwidth = (globalParams.shownColumns.note and 3 or 0) + (globalParams.shownColumns.volume and 3 or 0) + (globalParams.shownColumns.instrument and 3 or 0) + (globalParams.shownColumns.effect and 4 or 0) + 1
-    for i = 1, channelCount do
+    for i = scrollPos, channelCount do
         local text = "Channel " .. i
         if cwidth < #text then text = "Ch. " .. i end
         if cwidth < #text then text = tostring(i) end
-        term.setCursorPos(cwidth * (i - 1) + 5 + math.floor((cwidth - #text) / 2), 4)
+        term.setCursorPos(cwidth * (i - scrollPos) + 5 + math.floor((cwidth - #text) / 2), 4)
         term.blit(text, (mutedChannels[i] and "8" or "0"):rep(#text), ("7"):rep(#text))
     end
+    term.setCursorPos(1, 5)
+    term.clearLine()
     trackerwin.clear()
     for yy = 0, h do
         if patterns[pat][trackerpos-math.ceil(h / 2)+1] then
             trackerwin.setCursorPos(1, yy)
             trackerwin.blit(("%3d"):format(trackerpos-math.ceil(h / 2)) .. " ", "8888", "ffff")
-            for j = 1, channelCount do
+            for j = scrollPos, channelCount do
                 if patterns[pat][trackerpos-math.ceil(h / 2)+1][j] ~= nil then
                     local note = patterns[pat][trackerpos-math.ceil(h / 2)+1][j]
                     if globalParams.shownColumns.note then
@@ -820,11 +866,11 @@ local function redrawScreen(pat, ord, start)
                     end
                     if globalParams.shownColumns.volume then
                         if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                        elseif note.note and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        elseif note.note and note.instrument and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then
-                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param, 4)] or effectColor[note.effect])):rep(4), "ffff")
+                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param or 0, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param or 0, 4)] or effectColor[note.effect])):rep(4), "ffff")
                         else trackerwin.blit("--- ", "0000", "ffff") end
                     end
                 else
@@ -870,7 +916,7 @@ local function scrollScreen(pat)
     trackerwin.setCursorPos(1, h)
     if patterns[pat][trackerpos-math.ceil(h / 2)+1] then
         trackerwin.blit(("%3d"):format(trackerpos-math.ceil(h / 2)) .. " ", "8888", "ffff")
-        for x = 1, channelCount do
+        for x = scrollPos, channelCount do
             if patterns[pat][trackerpos-math.ceil(h / 2)+1] then
                 if patterns[pat][trackerpos-math.ceil(h / 2)+1][x] ~= nil then
                     local note = patterns[pat][trackerpos-math.ceil(h / 2)+1][x]
@@ -886,11 +932,11 @@ local function scrollScreen(pat)
                     end
                     if globalParams.shownColumns.volume then
                         if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                        elseif note.note and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        elseif note.note and note.instrument and note.note ~= 97 then trackerwin.blit(("v%02d "):format(instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then
-                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param, 4)] or effectColor[note.effect])):rep(4), "ffff")
+                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param or 0, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param or 0, 4)] or effectColor[note.effect])):rep(4), "ffff")
                         else trackerwin.blit("--- ", "0000", "ffff") end
                     end
                 else
@@ -910,6 +956,31 @@ local function scrollScreen(pat)
     end
     trackerpos = trackerpos + 1
     y = y + 1
+end
+
+local function drawVU(vu)
+    for i = scrollPos, channelCount do
+        local l, r = vu[i][1], vu[i][2]
+        local s = ""
+        s = ("7"):rep((1 - l) * math.floor(cwidth - 2)) ..
+            ("e"):rep(math.max(l - 0.75, 0) * math.floor(cwidth - 2)) ..
+            ("4"):rep(math.max(math.min(l - 0.5, 0.25), 0) * math.floor(cwidth - 2)) ..
+            ("d"):rep(math.max(math.min(l, 0.5), 0) * math.floor(cwidth - 2))
+        while #s < cwidth - 2 do if l > 0 and r > 0 then s = s .. "d" else s = s .. "7" end end
+        s = s ..
+            ("d"):rep(math.max(math.min(r, 0.5), 0) * math.floor(cwidth - 2)) ..
+            ("4"):rep(math.max(math.min(r - 0.5, 0.25), 0) * math.floor(cwidth - 2)) ..
+            ("e"):rep(math.max(r - 0.75, 0) * math.floor(cwidth - 2)) ..
+            ("7"):rep((1 - r) * math.floor(cwidth - 2))
+        while #s < cwidth * 2 - 4 do s = s .. "7" end
+        local st, sf, sb = "", "", ""
+        for a, b in s:gmatch "(.)(.)" do
+            if a == b then st, sf, sb = st .. " ", sf .. "7", sb .. a
+            else st, sf, sb = st .. "\x95", sf .. a, sb .. b end
+        end
+        term.setCursorPos(cwidth * (i - scrollPos) + 5 + 1, 5)
+        term.blit(st, sf, sb)
+    end
 end
 
 local state = {tempo = tempo, bpm = bpm, channels = {}, module = {instruments = instruments, order = order}, speakers = {}, order = 1, row = 1, globalVolume = 64, name = name}
@@ -933,7 +1004,7 @@ else
     if left.setPosition then left.setPosition(0, 0, 0) end
 end
 
-local function processTick(e, ls, rs)
+local function processTick(e, ls, rs, vu)
     for _,c in ipairs(state.channels) do
         if e and c.playing and c.playing.effect then effects[c.playing.effect](state, c, c.playing.effect_param or 0) end
         if c.instrument and c.volumeEnvelope.pos > 0 and not c.volumeEnvelope.sustain and not c.didSetInstrument and c.note then
@@ -958,12 +1029,19 @@ local function processTick(e, ls, rs)
             end
             setPan(state, c, c.panningEnvelope.panning * 4)
         end
+        if c.instrument and c.instrument.vibrato.depth > 0 then
+            doVibrato(state, c, c.instrument.vibrato.type, c.instrument.vibrato.rate / 4, c.instrument.vibrato.depth * c.instrument.vibrato.sweep_mult / 4)
+            if c.instrument.vibrato.sweep_mult < 1 then c.instrument.vibrato.sweep_mult = c.instrument.vibrato.sweep_mult + (1 / c.instrument.vibrato.sweep) end
+        end
         c.didSetInstrument = false
     end
-    local lss, rss = sound.generate((2.5 / state.bpm) * 48000, channelCount, right)
+    local lss, rss, vuu = sound.generate((2.5 / state.bpm) * 48000, channelCount, right)
     local sl, sr = #ls, #rs
     for i = 1, #lss do ls[sl+i] = lss[i] end
     for i = 1, #rss do rs[sr+i] = rss[i] end
+    if vu[1] then for i = 1, #vuu do vu[i][1], vu[i][2] = vu[i][1] + vuu[i][1], vu[i][2] + vuu[i][2] end
+    else for i = 1, #vuu do vu[i] = vuu[i] end end
+    vu.count = (vu.count or 0) + 1
 end
 
 if globalParams.autoSize then
@@ -1015,19 +1093,21 @@ while state.order <= #order do
                 if (not c.playing.note or c.playing.note == 0 or c.playing.effect == 9) and c.playing.effect then effects[c.playing.effect](state, c, c.playing.effect_param or 0) end
             end
         end
-        local ls, rs = {}, {}
-        processTick(false, ls, rs)
+        local ls, rs, vu = {}, {}, {}
+        processTick(false, ls, rs, vu)
         --waitForNextTick(state)
         if skippedRow then break end
         for k = 2, state.tempo do
             state.tick = k
-            processTick(true, ls, rs)
+            processTick(true, ls, rs, vu)
             --waitForNextTick(state)
             if skippedRow then break end
         end
-        waitForNextRow(state)
+        waitForNextRow(state, right)
         left.playAudio(ls, 1)
         if right then right.playAudio(rs, 1) end
+        for i,v in ipairs(vu) do v[1], v[2] = v[1] / vu.count, v[2] / vu.count end
+        drawVU(vu)
         if skippedRow then break end
         if pauseState then
             while pauseState == 0 do os.pullEvent() end
@@ -1099,6 +1179,8 @@ end, function()
             elseif ch == keys.eight then mutedChannels[8] = not mutedChannels[8] didChangeMuted = true
             elseif ch == keys.nine then mutedChannels[9] = not mutedChannels[9] didChangeMuted = true
             elseif ch == keys.zero then mutedChannels[10] = not mutedChannels[10] didChangeMuted = true
+            elseif ch == keys.a and scrollPos > 1 then scrollPos = scrollPos - 1 y = state.row trackerpos = state.row - 1 redrawScreen(order[state.order]+1, state.order)
+            elseif ch == keys.d and scrollPos < channelCount then scrollPos = scrollPos + 1 y = state.row trackerpos = state.row - 1 redrawScreen(order[state.order]+1, state.order)
             end
         end
         if didChangeMuted then
@@ -1106,7 +1188,7 @@ end, function()
             term.setBackgroundColor(colors.gray)
             term.clearLine()
             local cwidth = (globalParams.shownColumns.note and 3 or 0) + (globalParams.shownColumns.volume and 3 or 0) + (globalParams.shownColumns.instrument and 3 or 0) + (globalParams.shownColumns.effect and 4 or 0) + 1
-            for i = 1, channelCount do
+            for i = scrollPos, channelCount do
                 local text = "Channel " .. i
                 if cwidth < #text then text = "Ch. " .. i end
                 if cwidth < #text then text = tostring(i) end
