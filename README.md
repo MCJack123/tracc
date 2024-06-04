@@ -1,40 +1,27 @@
 # tracc
-An XM module tracker for ComputerCraft/CraftOS-PC. Sort of buggy, but it works.
+An XM and more module tracker for ComputerCraft 1.100+.
 
-This fork adds support for `speaker.playAudio`. It is not guaranteed that any other type of module works at the moment.
+This branch splits the core into a separate library, which can be embedded into other programs.
 
-![Screenshot](2021-03-28_22.50.15.png)
+![Screenshot](image.png)
 
 ## Usage
 To play a module, just run tracc with the path to the XM file. Press Q to close the tracker while playing.
 
-## Making modules
-### ComputerCraft 1.100+/CraftOS-PC v2.6.4+
-CC: Tweaked 1.100.0 introduces the `speaker.playAudio` method, which allows playing real 8-bit audio on a speaker. This allows tracc to be able to play *any* XM module out there. In addition, there are no timing constraints because of how the audio queue events work, so modules with any BPM can play, even in Minecraft. The current version is a bit slow, however, and in-game it does not appear to be able to keep up with more than 8 channels at once. In addition, the current implementation of `speaker.playAudio` has a very large amount of latency, so the tracker on screen will not represent the audio currently playing at all.
+You can seek through the file with the left and right arrow keys. The P key will pause the module, and the up/down arrow keys will move the cursor up/down. A and D will scroll the channels left and right respectively, allowing viewing the rest of the channels. Number keys 1-9/0 will toggle mute on channels 1-10.
 
-### ComputerCraft (1.99.1 or earlier)
-Modules for ComputerCraft with Minecraft sounds are much more limited than CraftOS-PC sound modules. Due to the one-off nature of sound in Minecraft, things like volume and pitch adjustments aren't possible. However, they have access to a much larger library of sounds than simple wave synthesis.
+Note that the cursor will be a couple of rows ahead, due to how ComputerCraft's audio works. CraftOS-PC will not have this issue, however.
 
-Because ComputerCraft limits sleep times to 50 ms increments, modules must be limited to 50 ms per tick. To accomplish this, your module should be set to 50 BPM and 2 ticks per row. (This may change in the future.)
+## Module support
+tracc can natively load pretty much any XM module file. It works best with modules with 8 channels or fewer, though larger modules are theoretically playable - normal CC is too slow to handle more channels. tracc can also load S3M and IT modules, but the effects are converted to XM internally, so they may not play correctly.
 
-A single tick can contain up to either 8 notes or 1 non-note sound for each speaker. (That is, for every tick in the song, each speaker may only have one sound or up to eight notes.) Speakers are automatically allocated, and if there aren't enough speakers for playback the program will error.
+## Embedding
+The `libtracc` module can be used to play modules inside other programs, with or without visual output.
 
-To add a sound to be played in the module, create a new instrument and sample pair, and set the sample's name to the name of the sound to play. For note block sounds, this can be the name of the note to play. For other sounds, this should be the namespaced ID of the sound to play (like would be in `/playsound`).
+- Call one of the `libtracc.read[XM|S3M|IT]File` functions to load a module. This takes a file handle, and returns a state object, which holds all of the information required for playback.
+  - Use `libtracc.makeFile` to turn string data into a usable file handle.
+- For simple playback, call `libtracc.play` with the state, optional volume, and the speakers to play on. This is a blocking function, and will return once the module finishes (which may be never if `state.loop` is true, which is the default).
+  - Put this function in a coroutine manager, like `parallel` or [Taskmaster](https://gist.github.com/MCJack123/1678fb2c240052f1480b07e9053d4537), to play while other code is running.
+- For more advanced playback, the `libtracc.tick` and `libtracc.row` functions can be used to process each tick/row sequentially. These take the state, whether to use stereo output, and optional tables to fill, and return tables with the left/mono, right (if requested), and VU information (which is mainly for use in tracc). The sample tables can be sent directly to `speaker.playAudio`.
 
-These are the valid note names:
-* banjo
-* basedrum
-* bass
-* bell
-* bit
-* chime
-* cow_bell
-* didgeridoo
-* flute
-* guitar
-* harp
-* hat
-* iron_xylophone
-* pling
-* snare
-* xylophone
+The `minitracc.lua` program shows how to use `libtracc` in a simple program.
