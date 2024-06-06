@@ -1956,8 +1956,8 @@ function libtracc.row(state, stereo, left, right, vu)
     left = left or {}
     right = right or (stereo and {} or nil)
     vu = vu or {}
-    if not state.tick or state.tick >= state.tempo then libtracc.tick(state, stereo, left, right, vu) end
-    while state.tick < state.tempo do libtracc.tick(state, stereo, left, right, vu) end
+    if not state.tick or state.tick >= state.tempo then if not libtracc.tick(state, stereo, left, right, vu) then return nil end end
+    while state.tick < state.tempo do if not libtracc.tick(state, stereo, left, right, vu) then return nil end end
     return left, right, vu
 end
 
