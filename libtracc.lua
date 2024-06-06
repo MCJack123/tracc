@@ -194,8 +194,8 @@ local function makeSound()
                 end
             end
             --if num > 0 then sample, rs = sample / (cc or num), rs / (cc or num) end
-            retval[j] = math.max(math.min(sample / 2, 1), -1) * 127
-            right[j] = math.max(math.min(rs / 2, 1), -1) * 127
+            retval[j] = math.max(math.min((state.globalVolume / 64) * sample / 2, 1), -1) * 127
+            right[j] = math.max(math.min((state.globalVolume / 64) * rs / 2, 1), -1) * 127
         end
         for i = 1, (cc or 32) do vu[i] = vu[i] and {vu[i][1] / length, vu[i][2] / length} or {0, 0} end
         return retval, right, vu
@@ -253,7 +253,7 @@ local function setVolume(state, channel, vol)
     channel.volume = vol
     if not channel.speaker then
         if state.mutedChannels[channel.num] then state.sound.setVolume(channel.num, 0)
-        else state.sound.setVolume(channel.num, vol / 64 * (state.globalVolume / 64) * (channel.volumeEnvelope.volume / 64) * (channel.instrument and channel.instrument.volume or 1)) end
+        else state.sound.setVolume(channel.num, vol / 64 * (channel.volumeEnvelope.volume / 64) * (channel.instrument and channel.instrument.volume or 1)) end
     end
 end
 
@@ -766,7 +766,7 @@ effects = {
     ---@param channel tracc.channel
     ---@param param number
     function(state, channel, param) -- G
-        state.globalVolume = param
+        state.globalVolume = math.min(math.max(param, 0), 64)
     end,
     ---@param state tracc
     ---@param channel tracc.channel
@@ -1832,7 +1832,7 @@ local function processTick(state, e, ls, rs, vu)
         --if not c.playing or c.playing.effect ~= 2 then effects[2](state, c, 0x02) end
         if e and c.playing and c.playing.effect then effects[c.playing.effect](state, c, c.playing.effect_param or 0) end
         if e and c.playing and c.playing.volume and c.playing.volume > 0x50 then volume_effects[math.floor(c.playing.volume / 16)](state, c, c.playing.volume % 16) end
-        if c.instrument and c.instrument.volumeEnvelope.loopType % 2 == 1 and c.volumeEnvelope.pos > 0 and not c.volumeEnvelope.sustain and not c.didSetInstrument and c.note then
+        if c.instrument and c.instrument.volumeEnvelope.loopType % 2 == 1 and c.volumeEnvelope.pos > 0 and not c.volumeEnvelope.sustain and c.note then
             c.volumeEnvelope.x = c.volumeEnvelope.x + 1
             c.volumeEnvelope.volume = c.volumeEnvelope.volume + c.volumeEnvelope.rate
             if c.volumeEnvelope.x == c.instrument.volumeEnvelope.points[c.volumeEnvelope.pos+1].x then
@@ -1847,7 +1847,7 @@ local function processTick(state, e, ls, rs, vu)
             end
             setVolume(state, c, c.volume)
         end
-        if c.instrument and c.instrument.panningEnvelope.loopType % 2 == 1 and not c.panningEnvelope.sustain and not c.didSetInstrument and c.note then
+        if c.instrument and c.instrument.panningEnvelope.loopType % 2 == 1 and not c.panningEnvelope.sustain and c.note then
             c.panningEnvelope.x = c.panningEnvelope.x + 1
             c.panningEnvelope.panning = c.panningEnvelope.panning + c.panningEnvelope.rate
             if c.panningEnvelope.x == c.instrument.panningEnvelope.points[c.panningEnvelope.pos+1].x then
