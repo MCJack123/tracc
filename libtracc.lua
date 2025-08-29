@@ -1431,7 +1431,7 @@ function libtracc.readS3MFile(file)
         inst.name = file.read(28):gsub("[ %z]+$", "")
         sample.name = inst.name
         --print(inst.name)
-        if file.read(4) ~= "SCRS" then
+        if file.read(4) ~= "SCRM" then
             file.close()
             error("Invalid S3M module")
         end
