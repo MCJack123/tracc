@@ -13,7 +13,7 @@ You can seek through the file with the left and right arrow keys. The P key will
 Note that the cursor will be a couple of rows ahead, due to how ComputerCraft's audio works. CraftOS-PC will not have this issue, however.
 
 ## Module support
-tracc can natively load pretty much any XM module file. It works best with modules with 8 channels or fewer, though larger modules are theoretically playable - normal CC is too slow to handle more channels. tracc can also load S3M and IT modules, but the effects are converted to XM internally, so they may not play correctly.
+tracc can natively load pretty much any XM module file. It works best with modules with 8 channels or fewer, though larger modules are theoretically playable - normal CC is too slow to handle more channels. tracc can also load S3M and IT modules, but the effects are converted to XM internally. S3M has fairly well-tested support for most modules, but IT is lacking many extended features, which will likely not be implemented in this version of tracc.
 
 ## Embedding
 The `libtracc` module can be used to play modules inside other programs, with or without visual output.

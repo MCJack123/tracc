@@ -1,6 +1,6 @@
 -- libtracc XM/S3M/IT module player library
 -- Licensed under the MIT license.
--- Copyright (c) 2021-2024 JackMacWindows.
+-- Copyright (c) 2021-2025 JackMacWindows.
 
 local libtracc = {
     interpolation = "none"
@@ -31,7 +31,7 @@ local amigaTable = {
     720,715,709,704,699,694,689,684,678,675,670,665,660,655,651,646,
     640,636,632,628,623,619,614,610,604,601,597,592,588,584,580,575,
     570,567,563,559,555,551,547,543,538,535,532,528,524,520,516,513,
-    508,505,502,498,494,491,487,484,480,477,474,470,467,463,460,457
+    508,505,502,498,494,491,487,484,480,477,474,470,467,463,460,457,453
 }
 
 local portaDrift = 192
@@ -92,11 +92,13 @@ local portaDrift = 192
 ---@field note number|nil
 ---@field finetune number|nil
 ---@field frequency number|nil
+---@field lastFrequency number|nil
 ---@field instrument tracc.instrument|nil
 ---@field didSetInstrument boolean|nil
 ---@field lastNote number|nil
 
 ---@class tracc
+---@field type "xm"|"s3m"|"it"
 ---@field tempo number
 ---@field bpm number
 ---@field channels tracc.channel[]
@@ -167,12 +169,12 @@ local function makeSound()
                     elseif interp == "linear" then s = (c.wavetable[math.floor(p)+1] + (c.wavetable[math.floor(p+1) % #c.wavetable+1] - c.wavetable[math.floor(p)+1]) * (p - math.floor(p))) * c.volume end
                     if stereo then
                         sample, rs = sample + s * math.min(c.pan+1, 1) * state.mixVolume, rs + s * math.min(1-c.pan, 1) * state.mixVolume
-                        if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu(s * math.min(c.pan+1, 1) * state.mixVolume), vu[i][2] + tovu(s * math.min(1-c.pan, 1) * state.mixVolume)
-                        else vu[i] = {tovu(s * math.min(c.pan+1, 1)), tovu(s * math.min(1-c.pan, 1) * state.mixVolume)} end
+                        if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu((state.globalVolume / 64) * s * math.min(c.pan+1, 1) * state.mixVolume), vu[i][2] + tovu((state.globalVolume / 64) * s * math.min(1-c.pan, 1) * state.mixVolume)
+                        else vu[i] = {tovu((state.globalVolume / 64) * s * math.min(c.pan+1, 1)), tovu((state.globalVolume / 64) * s * math.min(1-c.pan, 1) * state.mixVolume)} end
                     else
                         sample = sample + s * state.mixVolume
-                        if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu(s), vu[i][2] + tovu(s)
-                        else vu[i] = {tovu(s), tovu(s)} end
+                        if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu((state.globalVolume / 64) * s), vu[i][2] + tovu((state.globalVolume / 64) * s)
+                        else vu[i] = {tovu((state.globalVolume / 64) * s), tovu((state.globalVolume / 64) * s)} end
                     end
                     c.pos = c.pos + c.frequency / 48000 * c.dir
                     if c.pos < 0 then c.pos, c.dir = 0, 1 end
@@ -213,20 +215,23 @@ end
 ---@param state tracc
 ---@param note number
 ---@param finetune number
----@param sample tracc.sample
 ---@return number
-local function toFreq(state, note, finetune, sample)
-    if state.amigaSlides then
+local function toFreq(state, note, finetune)
+    if state.module.amigaSlides then
         local a = ((note % 12)*8 + math.floor(finetune/16)) % 96
-        return 14317456/((amigaTable[a]*(1-(finetune/16 % 1)) + amigaTable[(a+1) % 96]*((finetune/16 % 1))) * 16 / 2^math.floor(note / 12 - 1))
+        return (state.type == "xm" and 14317456 or 14187580)/((amigaTable[a]*(1-(finetune/16 % 1)) + amigaTable[a+1]*((finetune/16 % 1))) * 16 / 2^math.floor(note / 12 - 1))
     else return 8363*2^((6*12*16*4 - (10*12*16*4 - (note-1)*16*4 - math.floor(finetune/2))) / (12*16*4)) end
 end
 ---@param state tracc
 ---@param frequency number
 ---@param slide number
 ---@return number
-local function slideFreq(state, frequency, slide)
-    if state.amigaSlides then return 14317456 / (14317456 / frequency - slide * 2)
+local function slideFreq(state, frequency, slide, isPorta)
+    if isPorta and state.type == "xm" then slide = slide * 2 end
+    --elseif isPorta and state.type == "s3m" then slide = slide / 2 end
+    if state.module.amigaSlides then
+        local f = state.type == "xm" and 3579364 or 3546895
+        return f / math.max(f / frequency - slide, 1)
     else return frequency * 2^(slide / portaDrift) end
 end
 ---@param note number
@@ -312,7 +317,7 @@ local function setNote(state, channel, note, keepPos)
             if not channel.speaker then state.sound.setVolume(channel.num, 0) end
         elseif not channel.speaker and state.sound.version then
             channel.finetune = sample.finetune
-            channel.frequency = toFreq(state, note+sample.note, channel.finetune, sample)
+            channel.frequency = toFreq(state, note+sample.note, channel.finetune)
             state.sound.setWaveType(channel.num, "custom", sample.wavetable, sample.loopStart, bit32.band(sample.type, 3), keepPos)
             if sample.name:byte(1) == 33 then state.sound.setInterpolation(channel.num, "linear")
             else state.sound.setInterpolation(channel.num, nil) end
@@ -413,7 +418,7 @@ local e_effects = {
         if not channel.speaker then
             channel.finetune = param
             if channel.playing then
-                channel.frequency = toFreq(state, channel.playing.note+channel.instrument.samples[channel.playing.note].note, channel.finetune, channel.instrument.samples[channel.playing.note])
+                channel.frequency = toFreq(state, channel.playing.note+channel.instrument.samples[channel.playing.note].note, channel.finetune)
                 setFrequency(state, channel.num, channel.frequency, channel.instrument.samples[channel.playing.note])
             end
         end
@@ -652,19 +657,19 @@ effects = {
                     sample = channel.instrument.samples[note]
                     if sample then
                         channel.finetune = sample.finetune
-                        channel.frequency = toFreq(state, note+sample.note, channel.finetune, sample)
+                        channel.frequency = channel.lastFrequency or toFreq(state, note+sample.note, channel.finetune)
                         setFrequency(state, channel.num, channel.frequency, sample)
                         if channel.playing and channel.playing.note then channel.lastNote = channel.playing.note end
                     end
                     return 0
-                elseif channel.frequency < slideFreq(state, toFreq(state, note+sample.note, sample.finetune, sample), param * -2) then
-                    channel.frequency = slideFreq(state, channel.frequency, param * 2)
-                    setFrequency(state, channel.num, slideFreq(state, getFrequency(state, channel.num, sample), param * 2), sample)
-                elseif channel.frequency > slideFreq(state, toFreq(state, note+sample.note, sample.finetune, sample), param * 2) then
-                    channel.frequency = slideFreq(state, channel.frequency, param * -2)
-                    setFrequency(state, channel.num, slideFreq(state, getFrequency(state, channel.num, sample), param * -2), sample)
-                elseif channel.frequency ~= toFreq(state, note+sample.note, sample.finetune, sample) then
-                    channel.frequency = toFreq(state, note+sample.note, sample.finetune, sample)
+                elseif slideFreq(state, channel.frequency, param, true) < toFreq(state, note+sample.note, sample.finetune) then
+                    channel.frequency = slideFreq(state, channel.frequency, param, true)
+                    setFrequency(state, channel.num, slideFreq(state, getFrequency(state, channel.num, sample), param, true), sample)
+                elseif slideFreq(state, channel.frequency, -param, true) > toFreq(state, note+sample.note, sample.finetune) then
+                    channel.frequency = slideFreq(state, channel.frequency, -param, true)
+                    setFrequency(state, channel.num, slideFreq(state, getFrequency(state, channel.num, sample), -param, true), sample)
+                elseif channel.frequency ~= toFreq(state, note+sample.note, sample.finetune) then
+                    channel.frequency = toFreq(state, note+sample.note, sample.finetune)
                     setFrequency(state, channel.num, channel.frequency, sample)
                 end
             end
@@ -709,7 +714,7 @@ effects = {
     ---@param channel tracc.channel
     ---@param param number
     function(state, channel, param) -- 9
-        if state.tick == 1 and not state.mutedChannels[channel.num] then state.sound.setPosition(channel.num, param * 256) end
+        if state.tick == 1 and not state.mutedChannels[channel.num] and channel.playing and channel.playing.note then state.sound.setPosition(channel.num, param * 256) end
     end,
     ---@param state tracc
     ---@param channel tracc.channel
@@ -1158,6 +1163,7 @@ function libtracc.readXMFile(file)
         else file.seek("cur", instsize - 29) end
     end
     local state = {
+        type = "xm",
         tempo = tempo,
         bpm = bpm,
         channels = {},
@@ -1333,15 +1339,16 @@ function libtracc.readS3MFile(file)
         file.close()
         error("Not an S3M module")
     end
-    globalVolume = file.read() / 64
+    globalVolume = file.read() / 256
     tempo = file.read()
     bpm = file.read()
     restartPosition = 0
     amigaSlides = true
-    file.read() -- master volume
+    local isStereo = bit32.btest(file.read(), 0x80) -- master volume
     file.read() -- ultra click
     local hasChannelPan = file.read() == 252
     file.read(10)
+    local channelPan = {}
     for i = 1, 32 do
         local s = file.read()
         if s == 255 or channelCount then
@@ -1352,6 +1359,7 @@ function libtracc.readS3MFile(file)
                 file.close()
                 error("Unsupported S3M module")
             end
+            channelPan[i] = isStereo and (bit32.btest(s, 0x08) and 0xCC or 0x33) or 0x77
         end
     end
     if not channelCount then channelCount = 32 end
@@ -1365,6 +1373,12 @@ function libtracc.readS3MFile(file)
     local instPP, patPP = {}, {}
     for i = 1, instrumentCount do instPP[i] = fromLE(file.read(2)) * 16 end
     for i = 1, patternCount do patPP[i] = fromLE(file.read(2)) * 16 end
+    if hasChannelPan then
+        for i = 1, channelCount do
+            local p = file.read()
+            if bit32.btest(p, 0x20) then channelPan[i] = bit32.band(p, 0x0F) * 16 + bit32.band(p, 0x0F) end
+        end
+    end
 
     for i = 1, instrumentCount do
         local sample = {wavetable = {}, volume = 64, pan = 128}
@@ -1410,7 +1424,7 @@ function libtracc.readS3MFile(file)
         sample.type = bit32.band(sflags, 0x01) + bit32.band(sflags, 0x04) * 4
         local c2speed = fromLE(file.read(2)) + fromLE(file.read(2)) * 65536
         local note = 12 * math.log(c2speed / 8363, 2)
-        sample.note = math.ceil(note - 0.5)
+        sample.note = math.floor(note)
         sample.finetune = math.floor((note - sample.note) * 127)
         --print(c2speed, note, sample.note, sample.finetune)
         file.read(12)
@@ -1454,15 +1468,18 @@ function libtracc.readS3MFile(file)
                     end
                     if bit32.btest(b, 0x80) then
                         local e, p = file.read(), file.read()
-                        local ne, np, nv = s3mEffects[e](p, g[x])
-                        pattern[y][x].effect, pattern[y][x].effect_param = ne, np
-                        if nv and not pattern[y][x].volume then pattern[y][x].volume = nv end
+                        if e ~= 0 and s3mEffects[e] then
+                            local ne, np, nv = s3mEffects[e](p, g[x])
+                            pattern[y][x].effect, pattern[y][x].effect_param = ne, np
+                            if nv and not pattern[y][x].volume then pattern[y][x].volume = nv end
+                        end
                     end
                 end
             until b == 0
         end
     end
     local state = {
+        type = "s3m",
         tempo = tempo,
         bpm = bpm,
         channels = {},
@@ -1490,9 +1507,11 @@ function libtracc.readS3MFile(file)
             effectMemory = {},
             playing = {note = 0, instrument = 0, volume = 0, effect = 0, effect_param = 0},
             volume = 64,
+            pan = channelPan[i],
             volumeEnvelope = {volume = 64, pos = 0, x = 0},
             vibrato = {type = 0, pos = 0}
         }
+        if channelPan[i] then setPan(state, state.channels[i], channelPan[i]) end
     end
     return state
 end
@@ -1788,6 +1807,7 @@ function libtracc.readITFile(file)
         end
     end
     local state = {
+        type = "it",
         tempo = tempo,
         bpm = bpm,
         channels = {},
@@ -1924,13 +1944,21 @@ function libtracc.tick(state, stereo, left, right, vu)
     for k,c in ipairs(state.channels) do
         c.playing = row[k]
         if c.playing then
+            local setLastFrequency = false
             if c.playing.instrument and state.module.instruments[c.playing.instrument] then
                 setInstrument(state, c, c.playing.instrument)
-                if (c.playing.note or c.lastNote) ~= 97 then setPan(state, c, c.instrument.samples[c.playing.note or c.lastNote].pan) end
+                if (state.type == "xm" or c.pan == nil) and (c.playing.note or c.lastNote) ~= 97 then setPan(state, c, c.instrument.samples[c.playing.note or c.lastNote].pan) end
+                if state.type ~= "xm" and not (c.playing.note and c.playing.note ~= 0) and c.lastNote then
+                    c.lastFrequency = c.frequency
+                    setLastFrequency = true
+                    setNote(state, c, c.lastNote)
+                    setVolume(state, c, c.instrument.samples[c.lastNote].volume)
+                end
             end
             if c.playing.volume then volume_effects[math.floor(c.playing.volume / 16)](state, c, c.playing.volume % 16) end
             if c.playing.note and c.playing.note ~= 0 then
                 if (not c.playing.volume or c.playing.volume < 0x10 or c.playing.volume >= 0x60) and c.playing.note < 97 then setVolume(state, c, c.instrument.samples[c.playing.note].volume) end
+                if not setLastFrequency then c.lastFrequency = c.frequency end
                 if not c.playing.effect or c.playing.effect == 9 or effects[c.playing.effect](state, c, c.playing.effect_param or 0) ~= 0 then
                     if c.playing.note ~= 97 then c.lastNote = c.playing.note end
                     setNote(state, c, c.playing.note)

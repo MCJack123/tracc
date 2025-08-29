@@ -9,7 +9,7 @@ local globalParams = {
         volume = true,
         effect = true
     },
-    autoSize = true,
+    autoSize = false,
 }
 
 local function waitForNextRow(state, stereo)
@@ -20,7 +20,7 @@ end
 local state do
     local path = shell.resolve(...)
     if path == nil then error("Usage: tracc <file>") end
-    local file = fs.open(path, "rb")
+    local file = assert(fs.open(path, "rb"))
     local s = file.read(17)
     if s == "Extended Module: " then
         file.seek("set")
@@ -271,7 +271,7 @@ while state.order <= #state.module.order do
     while state.module.order[state.order] < 254 and state.row <= #state.module.patterns[state.module.order[state.order]+1] do
         local currentRow, currentTempo, currentBPM = state.row, state.tempo, state.bpm
         local ls, rs, vu = libtracc.row(state, right ~= nil)
-        if not ls then return end
+        if not ls or not vu then return end
         if state.tempo ~= currentTempo or state.bpm ~= currentBPM then
             term.setCursorPos(1, 1)
             term.clearLine()
