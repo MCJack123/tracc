@@ -73,7 +73,9 @@ local function redrawScreen(pat, ord, start)
     term.setCursorPos(timepos, 2)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
-    term.write(("[%02d:%02d]"):format(math.floor((os.epoch "utc" - startTime) / 60000), math.floor((os.epoch "utc" - startTime) / 1000) % 60))
+    local activeChannels = 0
+    for _, c in ipairs(state.sound.channels) do if c.wavetable and c.volume > 0 and c.frequency > 0 then activeChannels = activeChannels + 1 end end
+    term.write(("[%2d] [%02d:%02d]"):format(activeChannels, math.floor((os.epoch "utc" - startTime) / 60000), math.floor((os.epoch "utc" - startTime) / 1000) % 60))
     term.setCursorPos(1, 3)
     local ordx = {}
     for i = 1, #state.module.order do ordx[i] = term.getCursorPos() term.write((state.module.order[i] == 254 and "-" or state.module.order[i]) .. " ") end
@@ -107,7 +109,7 @@ local function redrawScreen(pat, ord, start)
                         if globalParams.shownColumns.instrument or not globalParams.shownColumns.volume then trackerwin.write(" ") end
                     end
                     if globalParams.shownColumns.instrument then
-                        if note.instrument then trackerwin.blit(("%02d"):format(note.instrument), "99", "ff")
+                        if note.instrument then trackerwin.blit(("%02d"):format(note.instrument):sub(-2), "99", "ff")
                         else trackerwin.blit("--", "00", "ff") end
                         if not globalParams.shownColumns.volume then trackerwin.write(" ") end
                     end
@@ -146,7 +148,9 @@ local function scrollScreen(pat)
     term.setCursorPos(timepos, 2)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
-    term.write(("[%02d:%02d]"):format(math.floor((os.epoch "utc" - startTime) / 60000), math.floor((os.epoch "utc" - startTime) / 1000) % 60))
+    local activeChannels = 0
+    for _, c in ipairs(state.sound.channels) do if c.wavetable and c.volume > 0 and c.frequency > 0 then activeChannels = activeChannels + 1 end end
+    term.write(("[%2d] [%02d:%02d]"):format(activeChannels, math.floor((os.epoch "utc" - startTime) / 60000), math.floor((os.epoch "utc" - startTime) / 1000) % 60))
     trackerwin.scroll(1)
     if y > 0 then
         trackerwin.setCursorPos(1, math.ceil(h / 2) - 1)
@@ -173,7 +177,7 @@ local function scrollScreen(pat)
                         if globalParams.shownColumns.instrument or not globalParams.shownColumns.volume then trackerwin.write(" ") end
                     end
                     if globalParams.shownColumns.instrument then
-                        if note.instrument then trackerwin.blit(("%02d"):format(note.instrument), "99", "ff")
+                        if note.instrument then trackerwin.blit(("%02d"):format(note.instrument):sub(-2), "99", "ff")
                         else trackerwin.blit("--", "00", "ff") end
                         if not globalParams.shownColumns.volume then trackerwin.write(" ") end
                     end
