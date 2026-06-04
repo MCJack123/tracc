@@ -21,16 +21,19 @@ local state do
     local path = shell.resolve(...)
     if path == nil then error("Usage: tracc <file>") end
     local file = assert(fs.open(path, "rb"))
-    local s = file.read(17)
-    if s == "Extended Module: " then
+    local s = file.read(0x30)
+    if s:sub(1, 17) == "Extended Module: " then
         file.seek("set")
         state = libtracc.readXMFile(file)
     elseif s:sub(1, 4) == "IMPM" then
         file.seek("set")
         state = libtracc.readITFile(file)
-    else
+    elseif s:sub(0x2D, 0x30) == "SCRM" then
         file.seek("set")
         state = libtracc.readS3MFile(file)
+    else
+        file.seek("set")
+        state = libtracc.readMODFile(file)
     end
 
     file.close()

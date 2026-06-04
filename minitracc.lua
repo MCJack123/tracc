@@ -11,9 +11,12 @@ local state do
     elseif s:sub(1, 4) == "IMPM" then
         file.seek("set")
         state = libtracc.readITFile(file)
-    else
+    elseif s:sub(0x2D, 0x30) == "SCRM" then
         file.seek("set")
         state = libtracc.readS3MFile(file)
+    else
+        file.seek("set")
+        state = libtracc.readMODFile(file)
     end
 
     file.close()

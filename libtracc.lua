@@ -98,7 +98,7 @@ local portaDrift = 192
 ---@field lastNote number|nil
 
 ---@class tracc
----@field type "xm"|"s3m"|"it"
+---@field type "xm"|"s3m"|"it"|"mod"
 ---@field tempo number
 ---@field bpm number
 ---@field channels tracc.channel[]
@@ -219,8 +219,21 @@ end
 local function toFreq(state, note, finetune)
     if state.module.amigaSlides then
         local a = ((note % 12)*8 + math.floor(finetune/16)) % 96
-        return (state.type == "xm" and 14317456 or 14187580)/((amigaTable[a]*(1-(finetune/16 % 1)) + amigaTable[a+1]*((finetune/16 % 1))) * 16 / 2^math.floor(note / 12 - 1))
+        return 14317456/((amigaTable[a]*(1-(finetune/16 % 1)) + amigaTable[a+1]*((finetune/16 % 1))) * 16 / 2^math.floor(note / 12 - 1))
     else return 8363*2^((6*12*16*4 - (10*12*16*4 - (note-1)*16*4 - math.floor(finetune/2))) / (12*16*4)) end
+end
+local function modPeriodToNote(period)
+    local octave = 3
+    while period > amigaTable[0] do octave, period = octave - 1, math.floor(period / 2 + 0.5) end
+    while period < amigaTable[96] do octave, period = octave + 1, period * 2 end
+    local idx, sz = 48, 24
+    while sz >= 1 do
+        if period == amigaTable[idx] then break
+        elseif period > amigaTable[idx] then idx = idx - sz
+        else idx = idx + sz end
+        sz = math.floor(sz / 2)
+    end
+    return math.floor(idx / 8 + 0.5) + octave * 12
 end
 ---@param state tracc
 ---@param frequency number
@@ -714,7 +727,14 @@ effects = {
     ---@param channel tracc.channel
     ---@param param number
     function(state, channel, param) -- 9
-        if state.tick == 1 and not state.mutedChannels[channel.num] and channel.playing and channel.playing.note then state.sound.setPosition(channel.num, param * 256) end
+        if state.tick == 1 and not state.mutedChannels[channel.num] and channel.playing and channel.playing.note then
+            local pos = param * 256
+            local ch = state.sound.channels[channel.num]
+            while pos > #ch.wavetable do
+                pos = ch.loopStart + (#ch.wavetable - pos)
+            end
+            state.sound.setPosition(channel.num, pos)
+        end
     end,
     ---@param state tracc
     ---@param channel tracc.channel
@@ -1198,6 +1218,133 @@ function libtracc.readXMFile(file)
     return state
 end
 
+--- Creates a new tracc state from a MOD file handle.
+---@param file file The file to read
+---@return tracc state The new tracc state
+function libtracc.readMODFile(file)
+    local patterns, order, instruments = {}, {}, {}
+    local name = file.read(20):gsub("[ %z]+$", "")
+
+    for i = 1, 31 do
+        local sample = {wavetable = {}, volume = 64, pan = 128}
+        local inst = {
+            samples = {},
+            samplesByNumber = {sample},
+            volumeEnvelope = {
+                points = {},
+                sustain = 0,
+                loopStart = 0,
+                loopEnd = 0,
+                loopType = 0
+            },
+            panningEnvelope = {
+                points = {},
+                sustain = 0,
+                loopStart = 0,
+                loopEnd = 0,
+                loopType = 0
+            },
+            vibrato = {
+                type = 0,
+                sweep = 0,
+                depth = 0,
+                rate = 0,
+                sweep_mult = 0
+            },
+            fadeOut = 0
+        }
+        for j = 1, 96 do inst.samples[j] = sample end
+        --print(instPP[i])
+        inst.name = file.read(22):gsub("[ %z]+$", "")
+        sample.name = inst.name
+        sample.size = (file.read() * 512 + file.read() * 2)
+        if sample.size > 2 then instruments[i] = inst end
+        local finetune = bit32.band(file.read(), 0xF)
+        sample.finetune = (finetune > 7 and finetune - 16 or finetune) * 16
+        sample.volume = file.read()
+        sample.loopStart = file.read() * 512 + file.read() * 2
+        sample.loopLength = file.read() * 512 + file.read() * 2
+        sample.type = sample.loopLength > 2 and 1 or 0
+        sample.note = 0
+    end
+
+    local numOrders = file.read()
+    local patternCount = 0
+    file.read()
+    for i = 1, numOrders do
+        order[i] = file.read()
+        patternCount = math.max(patternCount, order[i])
+    end
+    file.read(128 - numOrders)
+    local sig = file.read(4)
+    local channelCount = 4
+    if sig == "FLT8" or sig == "8CHN" then channelCount = 8
+    elseif sig == "6CHN" then channelCount = 6 end
+
+    for i = 1, patternCount + 1 do
+        patterns[i] = {}
+        for y = 1, 64 do
+            patterns[i][y] = {}
+            for x = 1, channelCount do
+                local num = (">I4"):unpack(file.read(4))
+                patterns[i][y][x] = {
+                    note = bit32.btest(num, 0x0FFF0000) and modPeriodToNote(bit32.extract(num, 16, 12)) or nil,
+                    instrument = bit32.btest(num, 0xF000F000) and bit32.extract(num, 28, 4) * 16 + bit32.extract(num, 12, 4) or nil,
+                    effect = bit32.btest(num, 0x00000FFF) and bit32.extract(num, 8, 4) or nil,
+                    effect_param = bit32.btest(num, 0x00000FFF) and bit32.extract(num, 0, 8) or nil
+                }
+            end
+        end
+    end
+
+    for i = 1, 31 do
+        --print(instruments[i].samples[1].size, ("%x"):format(file.seek()))
+        if instruments[i] then
+            for j = 1, instruments[i].samples[1].size do
+                local sample = file.read()
+                instruments[i].samples[1].wavetable[j] = (sample > 127 and sample - 256 or sample) / (sample > 127 and 128 or 127)
+            end
+        end
+    end
+
+    local state = {
+        type = "mod",
+        tempo = 6,
+        bpm = 125,
+        channels = {},
+        module = {
+            instruments = instruments,
+            patterns = patterns,
+            order = order,
+            name = name,
+            tracker = "ProTracker",
+            amigaSlides = true,
+            restartPosition = 1
+        },
+        speakers = {},
+        order = 1,
+        row = 1,
+        globalVolume = 64,
+        mutedChannels = {},
+        mixVolume = 1,
+        loop = true,
+        sound = makeSound()
+    }
+    for i = 1, channelCount do
+        state.channels[i] = {
+            num = i,
+            effectMemory = {},
+            playing = {note = 0, instrument = 0, volume = 0, effect = 0, effect_param = 0},
+            volume = 64,
+            pan = (i == 1 or i == 4 or i == 5 or i == 8) and 0 or 255,
+            volumeEnvelope = {volume = 64, pos = 0, x = 0},
+            vibrato = {type = 0, pos = 0}
+        }
+        setPan(state, state.channels[i], state.channels[i].pan)
+    end
+    return state
+end
+
 local s3mTrackerFmt = {
     "Scream Tracker %d.%d%d",
     "Imago Orpheus %d.%d%d",
@@ -1458,7 +1605,7 @@ function libtracc.readS3MFile(file)
                     if bit32.btest(b, 0x20) then
                         local n = file.read()
                         if n == 254 then pattern[y][x].note = 97
-                        elseif n <= 96 then pattern[y][x].note = bit32.rshift(n, 4) * 12 + bit32.band(n, 15) + 1 end
+                        elseif n <= 127 then pattern[y][x].note = bit32.rshift(n, 4) * 12 + bit32.band(n, 15) + 1 end
                         n = file.read()
                         if n ~= 0 then pattern[y][x].instrument = n end
                     end
@@ -1952,7 +2099,7 @@ function libtracc.tick(state, stereo, left, right, vu)
                     c.lastFrequency = c.frequency
                     setLastFrequency = true
                     setNote(state, c, c.lastNote)
-                    setVolume(state, c, c.instrument.samples[c.lastNote].volume)
+                    if state.type ~= "mod" then setVolume(state, c, c.instrument.samples[c.lastNote].volume) end
                 end
             end
             if c.playing.volume then volume_effects[math.floor(c.playing.volume / 16)](state, c, c.playing.volume % 16) end
