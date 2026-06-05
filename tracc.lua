@@ -73,7 +73,7 @@ local function redrawScreen(pat, ord, start)
     term.setCursorPos(timepos, 2)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
-    local activeChannels = 0
+    local activeChannels = #state.tempChannels
     for _, c in ipairs(state.sound.channels) do if c.wavetable and c.volume > 0 and c.frequency > 0 then activeChannels = activeChannels + 1 end end
     term.write(("[%2d] [%02d:%02d]"):format(activeChannels, math.floor((os.epoch "utc" - startTime) / 60000), math.floor((os.epoch "utc" - startTime) / 1000) % 60))
     term.setCursorPos(1, 3)
@@ -115,7 +115,7 @@ local function redrawScreen(pat, ord, start)
                     end
                     if globalParams.shownColumns.volume then
                         if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                        elseif note.note and note.instrument and note.note ~= 97 then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        elseif note.note and note.instrument and state.module.instruments[note.instrument].samples[note.note] and note.note ~= 97 then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then
@@ -148,7 +148,7 @@ local function scrollScreen(pat)
     term.setCursorPos(timepos, 2)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
-    local activeChannels = 0
+    local activeChannels = #state.tempChannels
     for _, c in ipairs(state.sound.channels) do if c.wavetable and c.volume > 0 and c.frequency > 0 then activeChannels = activeChannels + 1 end end
     term.write(("[%2d] [%02d:%02d]"):format(activeChannels, math.floor((os.epoch "utc" - startTime) / 60000), math.floor((os.epoch "utc" - startTime) / 1000) % 60))
     trackerwin.scroll(1)
@@ -183,7 +183,7 @@ local function scrollScreen(pat)
                     end
                     if globalParams.shownColumns.volume then
                         if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                        elseif note.note and note.instrument and note.note ~= 97 then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        elseif note.note and note.instrument and note.note ~= 97 and state.module.instruments[note.instrument].samples[note.note] then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then
@@ -309,6 +309,7 @@ while state.order <= #state.module.order do
             scrollScreen(state.module.order[state.order]+1)
         end
     end
+    if state.module.order[state.order] >= 254 then state.order = state.order + 1 end
     if skippedRow then
         skippedRow = false
     end
