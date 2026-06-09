@@ -69,6 +69,36 @@ local effectColorX = {[0] = "0", "4", "4", "0", "0", "3", "e", "0", "0", "8", "8
 local volumeString = "-vvvvvdcbauhplrg"
 local volumeColor = {[0] = "0", "5", "5", "5", "5", "5", "5", "5", "5", "5", "4", "4", "3", "3", "3", "4"}
 
+local function formatEffect(effect, param) return effectString:sub(effect + 1, effect + 1) .. ("%02X"):format(param or 0) end
+if state.type == "s3m" or state.type == "it" then
+    effectString = "JFEGHLKRXODBCCSTVWIJKLMNOPQQSIUVWSYZ\\"
+    function formatEffect(effect, param)
+        if effect == 0x0E then
+            local h, l = bit32.rshift(param, 4), bit32.band(param, 15)
+            if h == 0xB then effect, param = 0x0A, 0xF0 + l
+            elseif h == 0xA then effect, param = 0x0A, 0x0F + l * 16
+            elseif h == 0x2 then effect, param = 0x02, 0xF0 + l
+            elseif h == 0x1 then effect, param = 0x01, 0xF0 + l
+            elseif h == 0x3 then param = 0x10 + l
+            elseif h == 0x5 then param = 0x20 + l
+            elseif h == 0x4 then param = 0x30 + l
+            elseif h == 0x7 then param = 0x40 + l
+            elseif h == 0x6 then param = 0xB0 + l end
+        elseif effect == 0x21 then
+            local h, l = bit32.rshift(param, 4), bit32.band(param, 15)
+            if h == 0x1 then effect, param = 0x02, 0xE0 + l
+            elseif h == 0x2 then effect, param = 0x01, 0xE0 + l end
+        elseif effect == 0x19 then
+            local h, l = bit32.rshift(param, 4), bit32.band(param, 15)
+            if h == 0 then param = l * 16
+            elseif l == 0 then param = h end
+        elseif effect == 0x08 then
+            param = math.floor(param / 2)
+        end
+        return effectString:sub(effect + 1, effect + 1) .. ("%02X"):format(param or 0)
+    end
+end
+
 local function redrawScreen(pat, ord, start)
     term.setCursorPos(timepos, 2)
     term.setBackgroundColor(colors.black)
@@ -119,7 +149,7 @@ local function redrawScreen(pat, ord, start)
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then
-                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param or 0, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param or 0, 4)] or effectColor[note.effect])):rep(4), "ffff")
+                        if note.effect then trackerwin.blit(formatEffect(note.effect, note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param or 0, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param or 0, 4)] or effectColor[note.effect])):rep(4), "ffff")
                         else trackerwin.blit("--- ", "0000", "ffff") end
                     end
                 else
@@ -187,7 +217,7 @@ local function scrollScreen(pat)
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then
-                        if note.effect then trackerwin.blit(effectString:sub(note.effect + 1, note.effect + 1) .. ("%02X"):format(note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param or 0, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param or 0, 4)] or effectColor[note.effect])):rep(4), "ffff")
+                        if note.effect then trackerwin.blit(formatEffect(note.effect, note.effect_param or 0) .. " ", (note.effect == 0xE and effectColorE[bit32.rshift(note.effect_param or 0, 4)] or (note.effect == 0x21 and effectColorX[bit32.rshift(note.effect_param or 0, 4)] or effectColor[note.effect])):rep(4), "ffff")
                         else trackerwin.blit("--- ", "0000", "ffff") end
                     end
                 else
@@ -309,7 +339,7 @@ while state.order <= #state.module.order do
             scrollScreen(state.module.order[state.order]+1)
         end
     end
-    if state.module.order[state.order] >= 254 then state.order = state.order + 1 end
+    if state.module.order[state.order] and state.module.order[state.order] >= 254 then state.order = state.order + 1 end
     if skippedRow then
         skippedRow = false
     end

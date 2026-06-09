@@ -14,10 +14,10 @@ You can seek through the file with the left and right arrow keys. The P key will
 
 Note that the cursor will be a couple of rows ahead, due to how ComputerCraft's audio works. CraftOS-PC will not have this issue, however.
 
-You may pass "linear" as a second argument to enable linear interpolation for samples. This will improve audio .
+You may pass "linear" as a second argument to enable linear interpolation for samples. This will improve audio quality at the cost of speed/channel count.
 
 ## Module support
-tracc can natively load most common module files in MOD/XM/S3M format plus some IT modules. It works best with XM modules with 16 channels or fewer, though larger modules are theoretically playable - normal CC is too slow to handle more channels. While tracc can load S3M and IT modules, the effects are converted to XM internally as this is the native effect set. S3M has fairly well-tested support for most modules, but IT is lacking many extended features which will likely not be implemented in this version of tracc.
+tracc can natively load most common module files in MOD/XM/S3M format plus some IT modules. It works best with XM modules with 20 channels or fewer, though larger modules are theoretically playable - normal CC is too slow to handle more channels. While tracc can load S3M and IT modules, the effects are converted to XM internally as this is the native effect set. S3M has fairly well-tested support for most modules, but IT is lacking many extended features which will likely not be implemented in this version of tracc.
 
 ## Embedding
 The `libtracc` module can be used to play modules inside other programs, with or without visual output.

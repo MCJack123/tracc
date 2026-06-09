@@ -167,7 +167,8 @@ local function makeSound()
     function sound.generate(state, length, cc, stereo)
         cc = cc or 32
         local retval, right, vu = {}, {}, {}
-        local channels, interpolation = sound.channels, sound.interpolation
+        local channels, interpolation, globalVolume, mixVolume = sound.channels, sound.interpolation, state.globalVolume / 64, state.mixVolume
+        local vuVolume = globalVolume * mixVolume
         local nTempChannels = table.maxn(state.tempChannels)
         for j = 1, length do
             local sample, rs = 0, 0
@@ -178,20 +179,27 @@ local function makeSound()
                 local wavetable, nwavetable = c.wavetable, c.nwavetable
                 if wavetable and c.volume > 0 and c.frequency > 0 then
                     local p = c.pos * nwavetable
+                    local fp = floor(p) + 1
                     local s
-                    if interp == "none" then s = wavetable[floor(p)+1] * c.volume
-                    elseif interp == "linear" then s = (wavetable[floor(p)+1] + (wavetable[floor(p+1) % nwavetable + 1] - wavetable[floor(p)+1]) * (p - floor(p))) * c.volume end
+                    if interp == "none" then s = wavetable[fp] * c.volume
+                    elseif interp == "linear" then
+                        local a, b = wavetable[fp], wavetable[fp % nwavetable + 1]
+                        s = (a + (b - a) * (p - fp - 1)) * c.volume end
                     if stereo then
-                        sample, rs = sample + s * min(c.pan+1, 1) * state.mixVolume, rs + s * min(1-c.pan, 1) * state.mixVolume
+                        local l, r = min(c.pan+1, 1), min(1-c.pan, 1)
+                        sample, rs = sample + s * l * mixVolume, rs + s * r * mixVolume
                         if i <= cc then
-                            if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu((state.globalVolume / 64) * s * min(c.pan+1, 1) * state.mixVolume), vu[i][2] + tovu((state.globalVolume / 64) * s * min(1-c.pan, 1) * state.mixVolume)
-                            else vu[i] = {tovu((state.globalVolume / 64) * s * min(c.pan+1, 1)), tovu((state.globalVolume / 64) * s * min(1-c.pan, 1) * state.mixVolume)} end
+                            local vc = vu[i]
+                            if vc then vc[1], vc[2] = vc[1] + tovu(vuVolume * s * l), vc[2] + tovu(vuVolume * s * r)
+                            else vu[i] = {tovu(vuVolume * s * l), tovu(vuVolume * s * r)} end
                         end
                     else
-                        sample = sample + s * state.mixVolume
+                        sample = sample + s * mixVolume
                         if i <= cc then
-                            if vu[i] then vu[i][1], vu[i][2] = vu[i][1] + tovu((state.globalVolume / 64) * s), vu[i][2] + tovu((state.globalVolume / 64) * s)
-                            else vu[i] = {tovu((state.globalVolume / 64) * s), tovu((state.globalVolume / 64) * s)} end
+                            local v = tovu(vuVolume * s)
+                            local vc = vu[i]
+                            if vc then vc[1], vc[2] = vc[1] + v, vc[2] + v
+                            else vu[i] = {v, v} end
                         end
                     end
                     c.pos = c.pos + c.frequency / 48000 * c.dir
@@ -218,8 +226,8 @@ local function makeSound()
                 end
             end
             --if num > 0 then sample, rs = sample / (cc or num), rs / (cc or num) end
-            retval[j] = max(min((state.globalVolume / 64) * sample / 2, 1), -1) * 127
-            right[j] = max(min((state.globalVolume / 64) * rs / 2, 1), -1) * 127
+            retval[j] = max(min(globalVolume * sample / 2, 1), -1) * 127
+            right[j] = max(min(globalVolume * rs / 2, 1), -1) * 127
         end
         for i = 1, (cc or 32) do vu[i] = vu[i] and {vu[i][1] / length, vu[i][2] / length} or {0, 0} end
         return retval, right, vu
@@ -309,7 +317,6 @@ local function setVolume(state, channel, vol)
     if not channel.speaker then
         if state.mutedChannels[channel.num] then if channel.sound then channel.sound.volume = 0 else state.sound.setVolume(channel.num, 0) end
         else
-            assert(channel.volumeEnvelope.volume == channel.volumeEnvelope.volume, debug.traceback("nan"))
             local n = vol / 64 * (channel.volumeEnvelope.volume / 64) * (channel.instrument and channel.instrument.volume or 1)
             if channel.sound and n == 0 and channel.instrument.volumeEnvelope.loopType == 0 then error(debug.traceback()) end
             if channel.sound then channel.sound.volume = n else state.sound.setVolume(channel.num, n) end
