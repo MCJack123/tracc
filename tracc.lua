@@ -40,7 +40,7 @@ local state do
 end
 
 local notemap = {[0] = "B-", "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#"}
-local function formatNote(note) if note == 97 or note >= 254 then return "== " else return notemap[note % 12] .. tostring(math.floor(note / 12)+1) end end
+local function formatNote(note) if note == 97 or note == 255 then return "== " elseif note == 254 then return "^^ " else return notemap[note % 12] .. tostring(math.floor(note / 12)+1) end end
 
 term.setBackgroundColor(colors.black)
 term.setTextColor(colors.white)
@@ -72,6 +72,7 @@ local volumeColor = {[0] = "0", "5", "5", "5", "5", "5", "5", "5", "5", "5", "4"
 local function formatEffect(effect, param) return effectString:sub(effect + 1, effect + 1) .. ("%02X"):format(param or 0) end
 if state.type == "s3m" or state.type == "it" then
     effectString = "JFEGHLKRXODBCCSTVWIJKLMNOPQQSIUVWSYZ\\"
+    volumeString = "-vvvvvdcbauhpefg"
     function formatEffect(effect, param)
         if effect == 0x0E then
             local h, l = bit32.rshift(param, 4), bit32.band(param, 15)
