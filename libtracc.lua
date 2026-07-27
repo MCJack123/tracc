@@ -99,6 +99,7 @@ local portaDrift = 192
 ---@field instrument tracc.instrument|nil
 ---@field didSetInstrument boolean|nil
 ---@field lastNote number|nil
+---@field midiMacro number
 
 ---@class tracc
 ---@field type "xm"|"s3m"|"it"|"mod"
@@ -122,6 +123,7 @@ local portaDrift = 192
 ---@field currentOrder number
 ---@field currentRow number
 ---@field freqMemo table
+---@field midiMacros {parametered: fun(state: tracc, channel: tracc.channel, param: number)[], fixed: fun(state: tracc, channel: tracc.channel)[]}
 
 local log, abs, floor, min, max = math.log, math.abs, math.floor, math.min, math.max
 
@@ -672,7 +674,7 @@ local e_effects = {
     ---@param channel tracc.channel
     ---@param param number
     function(state, channel, param) -- F
-        -- unimplemented
+        channel.midiMacro = param
     end
 }
 
@@ -1076,7 +1078,8 @@ effects = {
     ---@param channel tracc.channel
     ---@param param number
     function(state, channel, param) -- Z
-        -- unimplemented
+        if param >= 0x80 then if state.midiMacros.fixed[param - 0x80] then state.midiMacros.fixed[param - 0x80](state, channel) end
+        elseif state.midiMacros.parametered[channel.midiMacro] then state.midiMacros.parametered[channel.midiMacro](state, channel, param) end
     end,
     ---@param state tracc
     ---@param channel tracc.channel
@@ -1366,6 +1369,7 @@ function libtracc.readXMFile(file)
             amigaSlides = amigaSlides,
             restartPosition = restartPosition
         },
+        midiMacros = {parametered = {}, fixed = {}},
         speakers = {},
         order = 1,
         row = 1,
@@ -1382,6 +1386,7 @@ function libtracc.readXMFile(file)
         state.channels[i] = {
             num = i,
             effectMemory = {},
+            midiMacro = 0,
             playing = {note = 0, instrument = 0, volume = 0, effect = 0, effect_param = 0},
             volume = 64,
             volumeEnvelope = {volume = 64, pos = 0, x = 0},
@@ -1497,6 +1502,7 @@ function libtracc.readMODFile(file)
             amigaSlides = true,
             restartPosition = 1
         },
+        midiMacros = {parametered = {}, fixed = {}},
         speakers = {},
         order = 1,
         row = 1,
@@ -1513,6 +1519,7 @@ function libtracc.readMODFile(file)
         state.channels[i] = {
             num = i,
             effectMemory = {},
+            midiMacro = 0,
             playing = {note = 0, instrument = 0, volume = 0, effect = 0, effect_param = 0},
             volume = 64,
             pan = (i == 1 or i == 4 or i == 5 or i == 8) and 0 or 255,
@@ -1822,6 +1829,7 @@ function libtracc.readS3MFile(file)
             amigaSlides = amigaSlides,
             restartPosition = restartPosition
         },
+        midiMacros = {parametered = {}, fixed = {}},
         speakers = {},
         order = 1,
         row = 1,
@@ -1838,6 +1846,7 @@ function libtracc.readS3MFile(file)
         state.channels[i] = {
             num = i,
             effectMemory = {},
+            midiMacro = 0,
             playing = {note = 0, instrument = 0, volume = 0, effect = 0, effect_param = 0},
             volume = 64,
             pan = channelPan[i],
@@ -2200,6 +2209,7 @@ function libtracc.readITFile(file)
             amigaSlides = amigaSlides,
             restartPosition = restartPosition
         },
+        midiMacros = {parametered = {}, fixed = {}},
         speakers = {},
         order = 1,
         row = 1,
@@ -2216,6 +2226,7 @@ function libtracc.readITFile(file)
         state.channels[i] = {
             num = i,
             effectMemory = {},
+            midiMacro = 0,
             playing = {note = 0, instrument = 0, volume = 0, effect = 0, effect_param = 0},
             volume = 64,
             volumeEnvelope = {volume = 64, pos = 0, x = 0},
