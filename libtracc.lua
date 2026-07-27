@@ -346,6 +346,10 @@ local function setVolume(state, channel, vol)
         if state.mutedChannels[channel.num] then if channel.sound then channel.sound.volume = 0 else state.sound.setVolume(channel.num, 0) end
         else
             local n = vol / 64 * (channel.volumeEnvelope.volume / 64) * (channel.instrument and channel.instrument.volume or 1)
+            if state.type == "it" then
+                local note = channel.note or (channel.playing and channel.playing.note)
+                if channel.instrument and note and channel.instrument.samples[note] then n = n * (channel.instrument.samples[note].volume / 64) end
+            end
             if channel.sound then channel.sound.volume = n else state.sound.setVolume(channel.num, n) end
         end
     end
@@ -388,7 +392,7 @@ end
 local function setInstrument(state, channel, inst)
     if not state.module.instruments[inst] then return end
     local nna = channel.instrument and channel.instrument.newNoteAction
-    if nna and channel.volume > 0 and channel.playing.note and not (channel.playing.note == 97 or channel.playing.note >= 254) and channel.instrument and not (channel.volumeEnvelope.pos >= #channel.instrument.volumeEnvelope.points) then
+    if nna and channel.volume > 0 and channel.playing.note and not (channel.playing.note == 97 or channel.playing.note >= 254) and channel.playing.effect ~= 3 and not (channel.playing.volume and channel.playing.volume >= 0xF0 and channel.playing.volume <= 0xFF) and channel.instrument then
         local dct = channel.instrument.duplicateCheckType
         if (dct == 1 and channel.playing.note == channel.note) or (dct == 2 and channel.instrument.samples[channel.playing.note or channel.note] == state.module.instruments[inst].samples[channel.note]) or (dct == 3 and state.module.instruments[inst] == channel.instrument) then
             nna = channel.instrument.duplicateNoteAction
@@ -425,23 +429,29 @@ local function setInstrument(state, channel, inst)
                 newchannel.num = #state.channels + id
                 newchannel.playing = nil
                 local channel = newchannel ---@diagnostic disable-line:redefined-local
-                if not channel.speaker then
-                    if channel.instrument and #channel.instrument.volumeEnvelope.points > 1 and channel.instrument.fadeOut > 0 then
+                if not channel.speaker and channel.instrument then
+                    if channel.instrument.volumeEnvelope.loopType % 2 == 0 then
                         state.sound.fadeOut(channel.sound, (32768 / channel.instrument.fadeOut) * (2.5 / state.bpm))
-                    elseif channel.instrument and #channel.instrument.volumeEnvelope.points - 1 == channel.instrument.volumeEnvelope.sustain then
-                        state.sound.fadeOut(channel.sound, (channel.instrument.volumeEnvelope.points[#channel.instrument.volumeEnvelope.points].x - channel.instrument.volumeEnvelope.points[#channel.instrument.volumeEnvelope.points-1].x) * (2.5 / state.bpm))
-                    end
+                    elseif channel.volumeEnvelope.pos >= #channel.instrument.volumeEnvelope.points then
+                        if #channel.instrument.volumeEnvelope.points > 1 and not (channel.playing and channel.playing.effect == 0xE and channel.playing.effect_param and bit32.band(channel.playing.effect_param, 0xF0) == 0xD0) and channel.instrument.fadeOut > 0 then
+                            state.sound.fadeOut(channel.sound, (32768 / channel.instrument.fadeOut) * (2.5 / state.bpm))
+                        else state.tempChannels[id] = nil end
+                    --elseif #channel.instrument.volumeEnvelope.points - 1 == channel.instrument.volumeEnvelope.sustain and channel.volumeEnvelope.sustain then
+                    --    state.sound.fadeOut(channel.sound, (channel.instrument.volumeEnvelope.points[#channel.instrument.volumeEnvelope.points].x - channel.instrument.volumeEnvelope.points[#channel.instrument.volumeEnvelope.points-1].x) * (2.5 / state.bpm))
+                    else channel.volumeEnvelope.sustain = false end
                 end
             end
         --elseif nna == 3 then
         end
     end
     channel.instrument = state.module.instruments[inst]
-    channel.volumeEnvelope = setupEnvelope(channel.instrument.volumeEnvelope, "volume", 64)
-    channel.panningEnvelope = setupEnvelope(channel.instrument.panningEnvelope, "panning", 32)
-    if channel.instrument.pitchEnvelope then channel.pitchEnvelope = setupEnvelope(channel.instrument.pitchEnvelope, "pitch", 32) end
-    if channel.instrument.vibrato.sweep > 0 then channel.instrument.vibrato.sweep_mult = 0
-    else channel.instrument.vibrato.sweep_mult = 1 end
+    if not (state.type == "it" and (channel.playing.effect == 3 or (channel.playing.volume and channel.playing.volume >= 0xF0 and channel.playing.volume <= 0xFF))) then
+        channel.volumeEnvelope = setupEnvelope(channel.instrument.volumeEnvelope, "volume", 64)
+        channel.panningEnvelope = setupEnvelope(channel.instrument.panningEnvelope, "panning", 32)
+        if channel.instrument.pitchEnvelope then channel.pitchEnvelope = setupEnvelope(channel.instrument.pitchEnvelope, "pitch", 32) end
+        if channel.instrument.vibrato.sweep > 0 then channel.instrument.vibrato.sweep_mult = 0
+        else channel.instrument.vibrato.sweep_mult = 1 end
+    end
 end
 
 ---@param state tracc
@@ -1935,6 +1945,8 @@ function libtracc.readITFile(file)
         sample.name = file.read(26):gsub("[ %z]+$", "")
         local convert = file.read()
         sample.pan = file.read()
+        if sample.pan >= 128 then sample.pan = (sample.pan - 128) * 2
+        else sample.pan = 128 end
         local size = fromLE(file.read(4))
         sample.loopStart = fromLE(file.read(4))
         sample.loopLength = fromLE(file.read(4)) - sample.loopStart
@@ -2070,8 +2082,8 @@ function libtracc.readITFile(file)
             local npoints = file.read()
             inst.volumeEnvelope.loopStart = file.read() + 1
             inst.volumeEnvelope.loopEnd = file.read() + 1
-            inst.volumeEnvelope.sustain = file.read() + 1
-            file.read() -- sustain end
+            inst.volumeEnvelope.sustainStart = file.read() + 1
+            inst.volumeEnvelope.sustain = file.read() + 1 -- sustain end
             for j = 1, npoints do
                 inst.volumeEnvelope.points[j] = {y = file.read(), x = fromLE(file.read(2))}
             end
@@ -2084,8 +2096,8 @@ function libtracc.readITFile(file)
             local npoints = file.read()
             inst.panningEnvelope.loopStart = file.read() + 1
             inst.panningEnvelope.loopEnd = file.read() + 1
-            inst.panningEnvelope.sustain = file.read() + 1
-            file.read() -- sustain end
+            inst.panningEnvelope.sustainStart = file.read() + 1
+            inst.panningEnvelope.sustain = file.read() + 1 -- sustain end
             for j = 1, npoints do
                 inst.panningEnvelope.points[j] = {y = ("b"):unpack(file.read(1)) + 32, x = fromLE(file.read(2))}
             end
@@ -2098,8 +2110,8 @@ function libtracc.readITFile(file)
             local npoints = file.read()
             inst.pitchEnvelope.loopStart = file.read() + 1
             inst.pitchEnvelope.loopEnd = file.read() + 1
-            inst.pitchEnvelope.sustain = file.read() + 1
-            file.read() -- sustain end
+            inst.pitchEnvelope.sustainStart = file.read() + 1
+            inst.pitchEnvelope.sustain = file.read() + 1 -- sustain end
             for j = 1, npoints do
                 inst.pitchEnvelope.points[j] = {y = ("b"):unpack(file.read(1)) + 32, x = fromLE(file.read(2))}
             end
@@ -2137,10 +2149,10 @@ function libtracc.readITFile(file)
                         local v = file.read()
                         if v <= 0x40 then v = v + 0x10
                         elseif v >= 0x80 and v < 0xC0 then v = 0xC0 + bit32.rshift(v - 0x80, 2)
-                        elseif v >= 65 and v <= 74 then v = 0x80 + (v - 65)
-                        elseif v >= 75 and v <= 84 then v = 0x90 + (v - 75)
-                        elseif v >= 85 and v <= 94 then v = 0x60 + (v - 85)
-                        elseif v >= 95 and v <= 104 then v = 0x70 + (v - 95)
+                        elseif v >= 65 and v <= 74 then v = 0x90 + (v - 65)
+                        elseif v >= 75 and v <= 84 then v = 0x80 + (v - 75)
+                        elseif v >= 85 and v <= 94 then v = 0x70 + (v - 85)
+                        elseif v >= 95 and v <= 104 then v = 0x60 + (v - 95)
                         elseif v >= 105 and v <= 114 then v = 0xD0 + (v - 105)
                         elseif v >= 115 and v <= 124 then v = 0xE0 + (v - 115)
                         elseif v >= 193 and v <= 202 then v = 0xF0 + (v - 193)
@@ -2230,8 +2242,17 @@ local function processEnvelope(iEnvelope, envelope, key)
                 envelope.x = points[envelope.pos].x
             end
             envelope[key] = points[envelope.pos].y
+            while envelope.pos < #points and points[envelope.pos].x == points[envelope.pos+1].x do envelope.pos = envelope.pos + 1 end
             if envelope.pos < #points then envelope.rate = (points[envelope.pos+1].y - points[envelope.pos].y) / (points[envelope.pos+1].x - points[envelope.pos].x) end
-            if envelope.pos >= #points or (bit32.btest(iEnvelope.loopType, 2) and envelope.pos == iEnvelope.sustain) and envelope.sustain == nil then envelope.sustain = true end
+            if envelope.pos >= #points or (bit32.btest(iEnvelope.loopType, 2) and envelope.pos == iEnvelope.sustain) and envelope.sustain == nil then
+                if envelope.sustainStart and envelope.sustainStart ~= envelope.sustain then
+                    envelope.pos = envelope.sustainStart
+                    envelope.x = points[envelope.pos].x
+                    envelope[key] = points[envelope.pos].y
+                    while envelope.pos < #points and points[envelope.pos].x == points[envelope.pos+1].x do envelope.pos = envelope.pos + 1 end
+                    if envelope.pos < #points then envelope.rate = (points[envelope.pos+1].y - points[envelope.pos].y) / (points[envelope.pos+1].x - points[envelope.pos].x) end
+                else envelope.sustain = true end
+            end
         end
         return true
     end
@@ -2261,6 +2282,7 @@ local function processTick(state, e, ls, rs, vu)
                     state.sound.channels[c.num].filter = {1 / n, 0, 0, -(d + 2 * e) / n, e / n}
                 else
                     c.finetune = (c.pitchEnvelope.pitch - 32) * 8
+                    if c.note and c.frequency and c.frequency > 0 then setFrequency(state, c.num, c.frequency * 2^((c.pitchEnvelope.pitch - 32) / 24), instrument.samples[c.note]) end
                 end
             end
             if instrument.vibrato.depth > 0 then
@@ -2278,7 +2300,8 @@ local function processTick(state, e, ls, rs, vu)
             local points = iVolumeEnvelope.points
             volumeEnvelope.x = volumeEnvelope.x + 1
             volumeEnvelope.volume = volumeEnvelope.volume + volumeEnvelope.rate
-            if volumeEnvelope.x == points[volumeEnvelope.pos+1].x then
+            if volumeEnvelope.pos >= #iVolumeEnvelope.points then state.tempChannels[i] = nil
+            elseif volumeEnvelope.x == points[volumeEnvelope.pos+1].x then
                 volumeEnvelope.pos = volumeEnvelope.pos + 1
                 if bit32.btest(iVolumeEnvelope.loopType, 4) and volumeEnvelope.pos == iVolumeEnvelope.loopEnd then
                     volumeEnvelope.pos = iVolumeEnvelope.loopStart
@@ -2355,14 +2378,14 @@ function libtracc.tick(state, stereo, left, right, vu)
                 setInstrument(state, c, playing.instrument)
                 if (state.type == "xm" or c.pan == nil) and (playing.note or c.lastNote) < 97 then setPan(state, c, c.instrument.samples[playing.note or c.lastNote].pan) end
                 if state.type ~= "xm" and not (playing.note and playing.note ~= 0) and c.lastNote then
-                    c.lastFrequency = c.frequency
+                    c.lastFrequency = getFrequency(state, c.num, instruments[playing.instrument].samples[c.lastNote])
                     setLastFrequency = true
                     setNote(state, c, c.lastNote)
                     if state.type ~= "mod" then setVolume(state, c, c.instrument.samples[c.lastNote].volume) end
                 end
             end
             local vol_ret
-            if playing.note and playing.note ~= 0 and not setLastFrequency then c.lastFrequency = c.frequency end
+            if playing.note and playing.note ~= 0 and not setLastFrequency then c.lastFrequency = c.instrument and getFrequency(state, c.num, c.instrument.samples[c.lastNote or playing.note]) or c.frequency end
             if playing.volume then vol_ret = volume_effects[floor(playing.volume / 16)](state, c, playing.volume % 16) end
             if playing.note and playing.note ~= 0 then
                 if (not playing.volume or playing.volume < 0x10 or playing.volume >= 0x60) and playing.note < 97 and c.instrument.samples[playing.note] then setVolume(state, c, c.instrument.samples[playing.note].volume) end

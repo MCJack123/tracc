@@ -101,6 +101,7 @@ if state.type == "s3m" or state.type == "it" then
 end
 
 local function redrawScreen(pat, ord, start)
+    local cx, cy = term.getCursorPos()
     term.setCursorPos(timepos, 2)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
@@ -173,9 +174,11 @@ local function redrawScreen(pat, ord, start)
     local line1, line2, line3 = trackerwin.getLine(math.ceil(h / 2))
     trackerwin.blit("  0 ", "0000", "7777")
     trackerwin.blit(line1:sub(5), line2:sub(5), ("7"):rep(#line3 - 4))
+    term.setCursorPos(cx, cy)
 end
 
 local function scrollScreen(pat)
+    local cx, cy = term.getCursorPos()
     term.setCursorPos(timepos, 2)
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
@@ -238,9 +241,11 @@ local function scrollScreen(pat)
     end
     trackerpos = trackerpos + 1
     y = y + 1
+    term.setCursorPos(cx, cy)
 end
 
 local function drawVU(vu)
+    local cx, cy = term.getCursorPos()
     for i = scrollPos, #state.channels do
         local l, r = vu[i][1], vu[i][2]
         local s = ""
@@ -263,14 +268,15 @@ local function drawVU(vu)
         term.setCursorPos(cwidth * (i - scrollPos) + 5 + 1, 5)
         term.blit(st, sf, sb)
     end
+    term.setCursorPos(cx, cy)
 end
 
 for i,v in ipairs{peripheral.find("speaker")} do state.speakers[i] = {usage = 0, speaker = v} end
 
 local left, right = peripheral.wrap "left", peripheral.wrap "right"
 if left and right and peripheral.hasType("left", "speaker") and peripheral.hasType("right", "speaker") then
-    if left.setPosition then left.setPosition(1, 0, 0) end
-    if right.setPosition then right.setPosition(-1, 0, 0) end
+    if left.setPosition then left.playAudio({0}, 0) left.setPosition(1, 0, 0) end
+    if right.setPosition then right.playAudio({0}, 0) right.setPosition(-1, 0, 0) end
 else
     left, right = peripheral.find "speaker", nil
     if not left then error("No speaker attached") end
@@ -390,6 +396,23 @@ end, function()
             elseif ch == keys.zero then state.mutedChannels[10] = not state.mutedChannels[10] didChangeMuted = true
             elseif ch == keys.a and scrollPos > 1 then scrollPos = scrollPos - 1 y = state.row trackerpos = state.row - 1 redrawScreen(state.module.order[state.order]+1, state.order)
             elseif ch == keys.d and scrollPos < #state.channels then scrollPos = scrollPos + 1 y = state.row trackerpos = state.row - 1 redrawScreen(state.module.order[state.order]+1, state.order)
+            elseif ch == keys.j then
+                pauseState = 1
+                term.setCursorPos(1, 1)
+                term.clearLine()
+                term.setBackgroundColor(colors.black)
+                term.setTextColor(colors.lightBlue)
+                write("Jump to order: ")
+                term.setTextColor(colors.white)
+                os.pullEvent("char") -- consume key
+                local order = tonumber(read())
+                if order and order > 0 and order <= #state.module.order then state.order, state.row = order, 1 end
+                term.setCursorPos(1, 1)
+                term.clearLine()
+                term.setBackgroundColor(colors.black)
+                term.setTextColor(colors.white)
+                print("Name:", state.module.name, "Tempo:", state.tempo, "BPM:", state.bpm)
+                pauseState = nil
             end
         elseif ev == "term_resize" then
             w, h = term.getSize()
