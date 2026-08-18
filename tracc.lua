@@ -147,7 +147,7 @@ local function redrawScreen(pat, ord, start)
                     end
                     if globalParams.shownColumns.volume then
                         if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                        elseif note.note and note.instrument and state.module.instruments[note.instrument].samples[note.note] and note.note ~= 97 then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        elseif note.note and note.instrument and state.module.instruments[note.instrument] and state.module.instruments[note.instrument].samples[note.note] and note.note ~= 97 then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then
@@ -217,7 +217,7 @@ local function scrollScreen(pat)
                     end
                     if globalParams.shownColumns.volume then
                         if note.volume then trackerwin.blit(volumeString:sub(math.floor(note.volume / 16) + 1, math.floor(note.volume / 16) + 1) .. ("%02d"):format(note.volume >= 0x10 and note.volume < 0x60 and math.min(note.volume - 0x10, 64) or note.volume % 16):sub(-2) .. " ", volumeColor[math.floor(note.volume / 16)]:rep(4), "ffff")
-                        elseif note.note and note.instrument and note.note ~= 97 and state.module.instruments[note.instrument].samples[note.note] then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
+                        elseif note.note and note.instrument and note.note ~= 97 and state.module.instruments[note.instrument] and state.module.instruments[note.instrument].samples[note.note] then trackerwin.blit(("v%02d "):format(state.module.instruments[note.instrument].samples[note.note].volume), "dddd", "ffff")
                         else trackerwin.blit(" -- ", "0000", "ffff") end
                     end
                     if globalParams.shownColumns.effect then

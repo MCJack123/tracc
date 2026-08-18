@@ -597,12 +597,14 @@ local e_effects = {
     ---@param channel tracc.channel
     ---@param param number
     function(state, channel, param) -- 6
-        if param == 0 then channel.effectMemory[0xE6] = state.row
-        else
-            if not state.usedE6 or state.usedE6 > 0 then
-                state.row = channel.effectMemory[0xE6] or state.row
-                state.usedE6 = (state.usedE6 or param) - 1
-            else state.usedE6 = nil end
+        if state.tick == 1 then
+            if param == 0 then channel.effectMemory[0xE6] = state.row
+            else
+                if not state.usedE6 or state.usedE6 > 0 then
+                    state.row = channel.effectMemory[0xE6] or state.row
+                    state.usedE6 = (state.usedE6 or param) - 1
+                else state.usedE6 = nil end
+            end
         end
     end,
     ---@param state tracc
